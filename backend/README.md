@@ -52,7 +52,8 @@ uv run pytest -q
 ```
 
 Use **one API process**. The local queue is not shared across API replicas/workers.
-Recognition runs in one spawned child process, with up to four waiting jobs.
+Recognition and simulation share one dispatcher, with up to four waiting jobs.
+Each job runs in a spawned child process.
 The backend service can also run from the repository root:
 
 ```sh
@@ -75,18 +76,18 @@ docker compose -p aromap-staging -f compose.yaml -f compose.staging.yaml up --bu
 
 Both modes publish `${BACKEND_PORT:-8000}` on `${HOST_BIND:-127.0.0.1}`. Swagger
 remains directly accessible on that host port. `/health` returns `{"status":"ok"}`
-after initialization and checks SQLite connectivity; it does not require a
-recognition provider. Compose uses this endpoint for backend readiness.
+after initialization and checks SQLite connectivity. Startup validates the configured
+recognizer import; `/health` does not run recognition. Compose uses this endpoint
+for backend readiness.
 
 Compose mounts `backend-data` at `/data`, retaining SQLite and files across container
 recreation. Staging's separate project name gives it a separate volume. Running
 `down -v` with the corresponding Compose/project arguments deletes that volume. API documentation and
 schemas are at `/docs` and `/openapi.json`.
 
-Recognition is unavailable by default. The entry point now delegates to an OpenCV
-implementation; enable it with
-`AROMAP_RECOGNITION_CALLABLE=app.floor_plans.recognition.interface:recognize_floor_plan`
-and restart. No mock recognition is served by production endpoints.
+Recognition uses the built-in OpenCV implementation by default. Operators can
+override the importable callable with `AROMAP_RECOGNITION_CALLABLE`; a blank value
+uses the default. No mock recognition is served by production endpoints.
 
 ## Configuration
 
@@ -106,8 +107,9 @@ automatically loaded by the application.
 | `AROMAP_MAX_IMAGE_PIXELS` | `20000000` | Maximum decoded width × height |
 | `AROMAP_RETENTION_SECONDS` | `86400` | Upload retention and terminal-job/result retention |
 | `AROMAP_CLEANUP_INTERVAL_SECONDS` | `60` | Periodic expired-resource cleanup |
-| `AROMAP_QUEUE_CAPACITY` | `4` | Waiting recognitions, in addition to one running job |
-| `AROMAP_RECOGNITION_CALLABLE` | unset | Operator-configured importable recognition function |
+| `AROMAP_QUEUE_CAPACITY` | `4` | Waiting recognition and simulation jobs, in addition to one running job |
+| `AROMAP_RECOGNITION_CALLABLE` | `app.floor_plans.recognition.interface:recognize_floor_plan` | Importable recognition function; blank uses the default |
+| `AROMAP_RECOGNITION_TIMEOUT_SECONDS` | `60` | Hard recognition deadline in seconds, including child startup |
 
 The storage root contains `registry.sqlite3`, `uploads/<image_id>/image.png`, and
 `results/<job_id>.json`. Public IDs are randomly generated; client filenames never
@@ -118,11 +120,9 @@ can access it until expiry. These endpoints are temporary resources, not cloud s
 
 ### API routing
 
-Frontend application code should use relative `/api/...` URLs. The FE lead owns
-Vite development proxying and Nginx staging proxying to `http://backend:8000`,
-preserving the `/api` prefix. Compose supplies `API_PROXY_TARGET` for Vite to consume;
-proxy configuration is not yet implemented in frontend files. Nginx must configure
-its upstream separately; inheriting that variable does not configure Nginx.
+Frontend application code uses relative `/api/...` URLs. Vite and staging Nginx
+proxy them to `API_PROXY_TARGET` (default `http://backend:8000`), preserving the
+`/api` prefix.
 
 The backend remains directly available on `BACKEND_PORT` for Swagger and API tools.
 Host port changes do not change the internal upstream. Direct browser requests
@@ -180,7 +180,7 @@ requests. Missing/wrong fields return the standard validation error below.
 { "image_id": "opaque-image-id" }
 ```
 
-`202 Accepted` (only when a provider is enabled):
+`202 Accepted`:
 
 ```json
 {
@@ -189,8 +189,7 @@ requests. Missing/wrong fields return the standard validation error below.
 }
 ```
 
-Until provider integration, this returns **503 `recognition_unavailable`** and
-creates no job. Queue saturation returns **429 `queue_full`**; retry later.
+Queue saturation returns **429 `queue_full`**; retry later.
 
 `GET /api/floor-plans/recognitions/{job_id}` returns `200` with status and an inline,
 typed result. Poll roughly once per second and stop at a terminal state.
@@ -244,9 +243,8 @@ boundary may be concave (e.g. an L-shaped plan). Holes exclude areas such as out
 courtyards, not ordinary rooms or internal walls. Initially there is one outer
 polygon; disconnected footprints and polygon topology validation remain future work.
 
-This change adds the output contract only: the current recognizer does not estimate
-the footprint yet, so it returns `null` and the worker adds a manual-tracing warning.
-The recognition owner will implement estimation. FE lets users correct an estimate
+The built-in recognizer estimates a footprint when it can close the exterior walls;
+otherwise it returns `null` with a manual-tracing warning. FE lets users correct an estimate
 or trace the missing boundary, stores it in pixels, and converts it to meters for
 `geometry_m.indoor_domain` in simulation. No new recognition request fields or
 separate domain endpoint are required.
@@ -264,7 +262,6 @@ separate domain endpoint are required.
 | 415 | `unsupported_image`, `animated_image` |
 | 422 | `invalid_image`, `invalid_request` |
 | 429 | `queue_full` |
-| 503 | `recognition_unavailable` |
 | 500 | `result_unavailable`, `internal_error` |
 
 Provider exceptions are logged server-side; jobs expose a generic
@@ -306,8 +303,7 @@ optional `holes`, all metric points. Closing edges are implicit. This distinguis
 indoor space from the rectangular image extent. The recognition contract provides
 an optional estimated domain in pixels. The planned UI lets the user review/correct
 it, or trace a boundary when no estimate is available; FE retains the reviewed
-pixel geometry and converts it to meters for the simulation request. Estimation
-implementation and the UI interaction remain follow-up work.
+pixel geometry and converts it to meters for the simulation request.
 Walls have IDs and metric `start`
 and `end`; doors/windows additionally reference a `wall_id`. Placement positions
 are explicitly `position_m`. The preparation library now checks polygon validity,
@@ -653,11 +649,10 @@ stores user projects or image bytes. Database transactions finish before computa
 
 The queue is bounded and in memory, not a durable broker. Shutdown/startup marks
 unfinished jobs `failed` with `job_interrupted`; there are no automatic retries or
-resumption. On shutdown, an executing simulation child is terminated, with a forced
-kill if it does not exit during the grace period. Simulations have a 120-second hard
-deadline, followed by a short termination grace period. Recognition runs in a separate
-process pool and has no hard timeout; a hung recognition provider may require operator
-intervention and can delay graceful shutdown.
+resumption. On shutdown, an executing child is terminated, with a forced kill if it
+does not exit during the grace period. Simulations have a 120-second hard deadline;
+recognition defaults to 60 seconds. A timeout fails the job with `execution_timeout`
+and the dispatcher continues with the next job. Both deadlines include child startup.
 
 Uploads expire 24 hours after creation by default. Jobs receive a fresh retention
 window at completion. Active jobs remain pollable past their provisional expiry;
@@ -743,8 +738,8 @@ furniture outlines, and full circles such as round tables are not read as doors.
   dimensions, `reference_image=None`, and `calibration=None`.
 - `layout.indoor_domain` is an estimated polygon in prepared-image pixels, or
   `None` with a warning when unavailable. Map its vertices back after any internal
-  resizing/rotation, just as for wall endpoints. Estimation is left to the
-  recognition implementation; consumers may review/correct or trace the domain.
+  resizing/rotation, just as for wall endpoints. Consumers may review/correct or
+  trace the domain.
   The OpenCV recognizer ([`indoor.py`](app/floor_plans/recognition/indoor.py))
   closes doors and windows, fills the outdoors in from the image edge, and traces
   everything left (all rooms and the walls between them) as **one** `boundary`
@@ -769,14 +764,14 @@ The executor checks basic output structure, dimensions, revision, and unset
 calibration/reference image. Full geometry/topology validation remains follow-up
 work; the model declarations do not enforce it yet.
 
-The recognition contract is extended additively with nullable `layout.indoor_domain`
-(`PixelIndoorDomain`). Existing providers can omit it while estimation is pending.
+The recognition contract has nullable `layout.indoor_domain` (`PixelIndoorDomain`);
+providers may omit it when they cannot estimate a footprint.
 The endpoint still returns `calibration: null`; actual calibration is frontend-owned.
 
 ## Backend roadmap
 
-1. **Recognition integration:** wire the provider into the existing job flow and
-   implement the estimated indoor domain; verify pixel geometry against prepared images.
+1. **Recognition refinement:** verify pixel geometry and footprint estimates against
+   representative prepared images.
 2. **Engine refinement:** benchmark and extend the standalone sparse backward-Euler
    implementation using predefined layouts and convergence/physical-balance checks.
 3. **Preparation refinement:** benchmark the implemented consumption resolver,
@@ -786,7 +781,7 @@ The endpoint still returns `calibration: null`; actual calibration is frontend-o
 5. **Advice and reliability:** add on-demand interpretation, execution limits,
    recovery improvements, and representative end-to-end checks.
 
-Recognition can progress alongside engine work. Further numerical calibration,
+Recognition refinement can progress alongside engine work. Further numerical calibration,
 supported environmental corrections, and final delivery DTO details remain design work. Browser
 persistence/export stays frontend-owned; no backend project storage is planned.
 

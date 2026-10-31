@@ -45,7 +45,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def health(request: Request):
         """Ready after lifespan initialization; verify the SQLite registry responds.
 
-        Recognition being disabled is intentional and does not make uploads unready.
+        Startup validates the recognition import; this check does not run recognition.
         """
         with request.app.state.floor_plans.database.connect() as db:
             db.execute("SELECT 1").fetchone()
