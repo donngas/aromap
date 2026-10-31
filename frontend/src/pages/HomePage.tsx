@@ -1,8 +1,7 @@
 import { useRef } from 'react'
 import diffuserImage from '../assets/home-diffuser.png'
-import logoMark from '../assets/logo-mark.png'
-import logoSphere from '../assets/logo-sphere.png'
 import spaceImage from '../assets/home-space.png'
+import { LogoMark } from '../components/LogoMark.tsx'
 import { useWanderingRibbons } from '../components/useWanderingRibbons.ts'
 import './HomePage.css'
 
@@ -19,7 +18,7 @@ export function HomePage({ onIntro, onStart }: HomePageProps) {
     <div className="home">
       <header className="home__brand">
         <h1 className="home__lockup">
-          <LogoMark />
+          <LogoMark className="home__mark" />
           <span className="home__wordmark">AROMAP</span>
         </h1>
         <p className="home__tagline">보이지 않는 향을, 공간 위에.</p>
@@ -57,16 +56,6 @@ function Scene() {
       <img className="home__diffuser" src={diffuserImage} alt="" width={473} height={796} />
       <canvas ref={front} className="home__ribbons" />
     </div>
-  )
-}
-
-/** The full logo: logo-mark.png has its sphere cut out (the intro page animates it), so it is laid back on. */
-function LogoMark() {
-  return (
-    <span className="home__mark">
-      <img src={logoMark} alt="" width={360} height={228} />
-      <img className="home__mark-sphere" src={logoSphere} alt="" width={41} height={41} />
-    </span>
   )
 }
 

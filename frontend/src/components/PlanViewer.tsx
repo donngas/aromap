@@ -1,13 +1,26 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { distance, distanceToSegment, wallAt } from '../floorPlan/geometry.ts'
 import type { Layout, Opening, PixelPoint, Wall } from '../floorPlan/layout.ts'
+import { drawGlyph } from '../diffusers/glyphs.ts'
+import type { DiffuserType } from '../diffusers/types.ts'
 import { LAYOUT_STYLE } from '../floorPlan/layoutStyle.ts'
 
-/** A placed diffuser, drawn as a numbered dot. */
+/** A placed diffuser: its type's icon on a dot in its scent colour, with a number. */
 export interface PlanMarker {
   id: string
   position: PixelPoint
   label: string
+  type: DiffuserType
+  color: string
+}
+
+/** A fan or air conditioner: a dot with an arrow toward where the air blows. */
+export interface PlanDevice {
+  id: string
+  kind: 'fan' | 'ac'
+  position: PixelPoint
+  /** Degrees clockwise from image right. */
+  direction: number
 }
 
 /** Major lines every `spacing` image pixels (e.g. 1 m), with quarter lines when zoomed in. */
@@ -54,14 +67,31 @@ interface PlanViewerProps {
   onMarkerSelect?: (id: string | null) => void
   /** Makes markers draggable. */
   onMarkerMove?: (id: string, position: PixelPoint) => void
+  /** A marker was clicked (pressed and released without dragging), at this viewport point. */
+  onMarkerClick?: (id: string, client: { x: number; y: number }) => void
+  /** Any press or zoom on the plan, e.g. to close a popup tied to screen positions. */
+  onInteract?: () => void
   /** Placing mode: a click on the plan reports its position instead of selecting. */
   onPlanClick?: (position: PixelPoint) => void
-  /** Doors drawn as open. */
-  openDoorIds?: ReadonlySet<string>
-  /** Enables opening and closing doors by clicking them. */
-  onDoorToggle?: (doorId: string) => void
+  /** Doors and windows drawn as open. */
+  openOpeningIds?: ReadonlySet<string>
+  /** Enables opening and closing doors and windows by clicking them. */
+  onOpeningToggle?: (openingId: string) => void
+  devices?: PlanDevice[]
+  selectedDeviceId?: string | null
+  onDeviceSelect?: (id: string | null) => void
+  /** Makes devices draggable. */
+  onDeviceMove?: (id: string, position: PixelPoint) => void
+  /** Shows a handle at each arrow's tip; dragging it turns the device. */
+  onDeviceRotate?: (id: string, direction: number) => void
+  /** A device was clicked (pressed and released without dragging), at this viewport point. */
+  onDeviceClick?: (id: string, client: { x: number; y: number }) => void
   /** Extra controls placed before "화면에 맞추기". */
   toolbar?: ReactNode
+  /** Shows the "화면에 맞추기" button. */
+  fitButton?: boolean
+  /** Screen pixels at the top covered by something else (e.g. a see-through header); fitting avoids them. */
+  fitInsetTop?: number
 }
 
 interface View {
@@ -74,8 +104,12 @@ type Drag =
   | { kind: 'pan'; x: number; y: number; tx: number; ty: number; moved: boolean }
   | { kind: 'vertex'; index: number }
   | { kind: 'marker'; id: string; x: number; y: number; moved: boolean }
+  | { kind: 'device'; id: string; x: number; y: number; moved: boolean }
+  | { kind: 'rotate'; id: string }
 
-const NO_DOORS: ReadonlySet<string> = new Set()
+const NO_OPENINGS: ReadonlySet<string> = new Set()
+/** Rotation snaps to this many degrees. */
+const ROTATE_STEP = 5
 
 /** Screen-pixel radius within which a handle or wall responds to the pointer. */
 const HANDLE_HIT_PX = 10
@@ -99,10 +133,20 @@ export function PlanViewer({
   selectedMarkerId = null,
   onMarkerSelect,
   onMarkerMove,
+  onMarkerClick,
+  onInteract,
   onPlanClick,
-  openDoorIds = NO_DOORS,
-  onDoorToggle,
+  openOpeningIds = NO_OPENINGS,
+  onOpeningToggle,
+  devices,
+  selectedDeviceId = null,
+  onDeviceSelect,
+  onDeviceMove,
+  onDeviceRotate,
+  onDeviceClick,
   toolbar,
+  fitButton = true,
+  fitInsetTop = 0,
 }: PlanViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -114,7 +158,7 @@ export function PlanViewer({
   const [redraw, setRedraw] = useState(0)
   const [dragOver, setDragOver] = useState(false)
   const [hoverWallId, setHoverWallId] = useState<string | null>(null)
-  const [hoverDoorId, setHoverDoorId] = useState<string | null>(null)
+  const [hoverOpeningId, setHoverOpeningId] = useState<string | null>(null)
   const [cursor, setCursor] = useState('grab')
   const editable = Boolean(polygon && onPolygonChange)
 
@@ -124,14 +168,15 @@ export function PlanViewer({
 
   const fitToView = useCallback(() => {
     if (!image || size.width === 0) return
-    const scale = Math.min(size.width / image.naturalWidth, size.height / image.naturalHeight) * 0.92
+    const height = Math.max(1, size.height - fitInsetTop)
+    const scale = Math.min(size.width / image.naturalWidth, height / image.naturalHeight) * 0.92
     viewRef.current = {
       scale,
       tx: (size.width - image.naturalWidth * scale) / 2,
-      ty: (size.height - image.naturalHeight * scale) / 2,
+      ty: fitInsetTop + (height - image.naturalHeight * scale) / 2,
     }
     setRedraw((n) => n + 1)
-  }, [image, size.width, size.height])
+  }, [image, size.width, size.height, fitInsetTop])
 
   useEffect(() => {
     const el = containerRef.current
@@ -184,7 +229,7 @@ export function PlanViewer({
       ctx.imageSmoothingEnabled = true
     }
     if (layout) {
-      drawLayout(ctx, layout, scale, wallThickness, openDoorIds, hoverDoorId)
+      drawLayout(ctx, layout, scale, wallThickness, openOpeningIds, hoverOpeningId)
       const highlighted = [selectedWallId, hoverWallId !== selectedWallId ? hoverWallId : null]
       for (const id of highlighted) {
         const wall = id ? layout.walls.find((w) => w.id === id) : undefined
@@ -192,6 +237,7 @@ export function PlanViewer({
       }
     }
     if (polygon) strokePolygon(ctx, polygon, scale, editable)
+    if (devices) drawDevices(ctx, devices, selectedDeviceId, scale, Boolean(onDeviceRotate))
     if (markers) drawMarkers(ctx, markers, selectedMarkerId, scale)
   }, [
     image,
@@ -207,11 +253,20 @@ export function PlanViewer({
     overlay,
     markers,
     selectedMarkerId,
-    openDoorIds,
-    hoverDoorId,
+    openOpeningIds,
+    hoverOpeningId,
+    devices,
+    selectedDeviceId,
+    onDeviceRotate,
     size,
     redraw,
   ])
+
+  // Latest onInteract for the wheel listener, which is registered once.
+  const onInteractRef = useRef(onInteract)
+  useEffect(() => {
+    onInteractRef.current = onInteract
+  }, [onInteract])
 
   // React registers wheel listeners as passive, so zoom needs a manual listener.
   useEffect(() => {
@@ -219,6 +274,7 @@ export function PlanViewer({
     if (!canvas) return
     const onWheel = (event: WheelEvent) => {
       event.preventDefault()
+      onInteractRef.current?.()
       const rect = canvas.getBoundingClientRect()
       const sx = event.clientX - rect.left
       const sy = event.clientY - rect.top
@@ -279,31 +335,53 @@ export function PlanViewer({
     return null
   }
 
-  const doorUnder = (p: PixelPoint): Opening | null => {
-    if (!layout || !onDoorToggle) return null
+  /** The door or window under `p`, if they can be toggled. */
+  const openingUnder = (p: PixelPoint): Opening | null => {
+    if (!layout || !onOpeningToggle) return null
     const tolerance = Math.max(wallThickness / 2, HANDLE_HIT_PX / viewRef.current.scale)
     let best: Opening | null = null
     let bestDistance = tolerance
-    for (const door of layout.doors) {
-      const d = distanceToSegment(p, door.start, door.end)
+    for (const opening of [...layout.doors, ...layout.windows]) {
+      const d = distanceToSegment(p, opening.start, opening.end)
       if (d <= bestDistance) {
-        best = door
+        best = opening
         bestDistance = d
       }
     }
     return best
   }
 
+  /** A device whose rotate handle is under `p`. */
+  const rotateHandleUnder = (p: PixelPoint): PlanDevice | null => {
+    if (!devices || !onDeviceRotate) return null
+    const scale = viewRef.current.scale
+    for (let i = devices.length - 1; i >= 0; i--) {
+      if (distance(deviceHandle(devices[i], scale), p) <= (LAYOUT_STYLE.device.handleRadius + 4) / scale) return devices[i]
+    }
+    return null
+  }
+
+  const deviceUnder = (p: PixelPoint): PlanDevice | null => {
+    if (!devices || !(onDeviceSelect || onDeviceMove)) return null
+    const tolerance = (LAYOUT_STYLE.device.radius + 3) / viewRef.current.scale
+    for (let i = devices.length - 1; i >= 0; i--) {
+      if (distance(devices[i].position, p) <= tolerance) return devices[i]
+    }
+    return null
+  }
+
   const updateHover = (p: PixelPoint) => {
-    const handle = vertexAt(p) >= 0 || midpointAt(p) >= 0 || markerUnder(p) !== null
-    const door = handle || onPlanClick ? null : doorUnder(p)
+    const rotating = rotateHandleUnder(p) !== null
+    const handle =
+      rotating || vertexAt(p) >= 0 || midpointAt(p) >= 0 || markerUnder(p) !== null || deviceUnder(p) !== null
+    const door = handle || onPlanClick ? null : openingUnder(p)
     const wall = handle || door ? null : wallUnder(p)
-    const nextCursor = handle ? 'move' : door || wall ? 'pointer' : 'grab'
+    const nextCursor = rotating ? 'alias' : handle ? 'move' : door || wall ? 'pointer' : 'grab'
     if (nextCursor !== cursor) setCursor(nextCursor)
     const nextWall = wall?.id ?? null
     if (nextWall !== hoverWallId) setHoverWallId(nextWall)
     const nextDoor = door?.id ?? null
-    if (nextDoor !== hoverDoorId) setHoverDoorId(nextDoor)
+    if (nextDoor !== hoverOpeningId) setHoverOpeningId(nextDoor)
   }
 
   return (
@@ -330,7 +408,20 @@ export function PlanViewer({
         style={{ cursor: cursor === 'grab' && onPlanClick ? 'crosshair' : cursor }}
         onPointerDown={(event) => {
           event.currentTarget.setPointerCapture(event.pointerId)
+          onInteract?.()
           const p = toImage(event.clientX, event.clientY)
+          const turning = rotateHandleUnder(p)
+          if (turning) {
+            onDeviceSelect?.(turning.id)
+            dragRef.current = { kind: 'rotate', id: turning.id }
+            return
+          }
+          const device = deviceUnder(p)
+          if (device) {
+            onDeviceSelect?.(device.id)
+            dragRef.current = { kind: 'device', id: device.id, x: event.clientX, y: event.clientY, moved: false }
+            return
+          }
           const marker = markerUnder(p)
           if (marker) {
             onMarkerSelect?.(marker.id)
@@ -371,6 +462,21 @@ export function PlanViewer({
             onPolygonChange(next)
             return
           }
+          if (drag.kind === 'rotate') {
+            const device = devices?.find((d) => d.id === drag.id)
+            if (!device || !onDeviceRotate) return
+            const angle = (Math.atan2(p.y - device.position.y, p.x - device.position.x) * 180) / Math.PI
+            onDeviceRotate(drag.id, (Math.round(angle / ROTATE_STEP) * ROTATE_STEP + 360) % 360)
+            return
+          }
+          if (drag.kind === 'device') {
+            if (!onDeviceMove) return
+            if (drag.moved || Math.hypot(event.clientX - drag.x, event.clientY - drag.y) > CLICK_TOLERANCE_PX) {
+              drag.moved = true
+              onDeviceMove(drag.id, clampToImage(p))
+            }
+            return
+          }
           if (drag.kind === 'marker') {
             if (!onMarkerMove) return
             if (drag.moved || Math.hypot(event.clientX - drag.x, event.clientY - drag.y) > CLICK_TOLERANCE_PX) {
@@ -390,20 +496,31 @@ export function PlanViewer({
         onPointerUp={(event) => {
           const drag = dragRef.current
           dragRef.current = null
+          if (drag?.kind === 'device' && !drag.moved) {
+            onDeviceClick?.(drag.id, { x: event.clientX, y: event.clientY })
+            return
+          }
+          if (drag?.kind === 'marker' && !drag.moved) {
+            onMarkerClick?.(drag.id, { x: event.clientX, y: event.clientY })
+            return
+          }
           if (drag?.kind === 'pan' && !drag.moved) {
             const p = toImage(event.clientX, event.clientY)
             if (onPlanClick) {
               onPlanClick(clampToImage(p))
               return
             }
-            const door = doorUnder(p)
-            if (door) {
-              onDoorToggle?.(door.id)
+            const opening = openingUnder(p)
+            if (opening) {
+              onOpeningToggle?.(opening.id)
               return
             }
             const wall = wallUnder(p)
             if (wall) onWallSelect?.(wall.id)
-            else onMarkerSelect?.(null)
+            else {
+              onMarkerSelect?.(null)
+              onDeviceSelect?.(null)
+            }
           }
         }}
         onDoubleClick={(event) => {
@@ -417,7 +534,7 @@ export function PlanViewer({
         }}
         onPointerLeave={() => {
           if (hoverWallId) setHoverWallId(null)
-          if (hoverDoorId) setHoverDoorId(null)
+          if (hoverOpeningId) setHoverOpeningId(null)
         }}
       />
       {!image && onFileDrop && (
@@ -426,17 +543,19 @@ export function PlanViewer({
           <p>왼쪽에서 파일을 선택하세요.</p>
         </div>
       )}
-      {hoverDoorId && (
+      {hoverOpeningId && (
         <p className="viewer__hint" role="status">
-          {openDoorIds.has(hoverDoorId) ? '열린 문 · 클릭하면 닫혀요' : '닫힌 문 · 클릭하면 열려요'}
+          {openingHint(layout, hoverOpeningId, openOpeningIds.has(hoverOpeningId))}
         </p>
       )}
-      {image && (
+      {image && (toolbar || fitButton) && (
         <div className="viewer__toolbar">
           {toolbar}
-          <button type="button" onClick={fitToView}>
-            화면에 맞추기
-          </button>
+          {fitButton && (
+            <button type="button" onClick={fitToView}>
+              화면에 맞추기
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -483,8 +602,8 @@ function drawLayout(
   layout: Layout,
   scale: number,
   thickness: number,
-  openDoorIds: ReadonlySet<string>,
-  hoverDoorId: string | null,
+  openIds: ReadonlySet<string>,
+  hoverId: string | null,
 ) {
   const wallsById = new Map(layout.walls.map((w) => [w.id, w]))
   const cutsByWall = new Map<string, Interval[]>()
@@ -543,16 +662,23 @@ function drawLayout(
     ctx.setLineDash([])
   }
   openings(
-    layout.doors.filter((d) => !openDoorIds.has(d.id)),
+    layout.doors.filter((d) => !openIds.has(d.id)),
     LAYOUT_STYLE.door,
   )
   openings(
-    layout.doors.filter((d) => openDoorIds.has(d.id)),
+    layout.doors.filter((d) => openIds.has(d.id)),
     LAYOUT_STYLE.openDoor,
   )
-  openings(layout.windows, LAYOUT_STYLE.window)
+  openings(
+    layout.windows.filter((w) => !openIds.has(w.id)),
+    LAYOUT_STYLE.window,
+  )
+  openings(
+    layout.windows.filter((w) => openIds.has(w.id)),
+    LAYOUT_STYLE.openWindow,
+  )
 
-  const hovered = hoverDoorId ? layout.doors.find((d) => d.id === hoverDoorId) : undefined
+  const hovered = hoverId ? [...layout.doors, ...layout.windows].find((o) => o.id === hoverId) : undefined
   if (hovered) {
     ctx.beginPath()
     ctx.moveTo(hovered.start.x, hovered.start.y)
@@ -560,6 +686,84 @@ function drawLayout(
     ctx.strokeStyle = LAYOUT_STYLE.selection.hover
     ctx.lineWidth = thickness + LAYOUT_STYLE.selection.outset / scale
     ctx.stroke()
+  }
+}
+
+/** Hint shown while hovering a door or window. */
+function openingHint(layout: Layout | null, id: string, open: boolean): string {
+  const kind = layout?.windows.some((w) => w.id === id) ? '창문' : '문'
+  return open ? `열린 ${kind} · 클릭하면 닫혀요` : `닫힌 ${kind} · 클릭하면 열려요`
+}
+
+/** Arrow tip of a device, in image pixels (the arrow has a fixed screen length). */
+function deviceHandle(d: PlanDevice, scale: number): PixelPoint {
+  const length = LAYOUT_STYLE.device.arrow / scale
+  const a = (d.direction * Math.PI) / 180
+  return { x: d.position.x + Math.cos(a) * length, y: d.position.y + Math.sin(a) * length }
+}
+
+function drawDevices(
+  ctx: CanvasRenderingContext2D,
+  devices: PlanDevice[],
+  selectedId: string | null,
+  scale: number,
+  rotatable: boolean,
+) {
+  const style = LAYOUT_STYLE.device
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  for (const d of devices) {
+    const { x, y } = d.position
+    const tip = deviceHandle(d, scale)
+    const a = (d.direction * Math.PI) / 180
+    // Arrow toward where the air blows.
+    ctx.strokeStyle = style.color
+    ctx.fillStyle = style.color
+    ctx.lineWidth = 2.5 / scale
+    ctx.beginPath()
+    ctx.moveTo(x, y)
+    ctx.lineTo(tip.x, tip.y)
+    ctx.stroke()
+    const head = 9 / scale
+    ctx.beginPath()
+    ctx.moveTo(tip.x + Math.cos(a) * head * 0.4, tip.y + Math.sin(a) * head * 0.4)
+    ctx.lineTo(tip.x - Math.cos(a - 0.5) * head, tip.y - Math.sin(a - 0.5) * head)
+    ctx.lineTo(tip.x - Math.cos(a + 0.5) * head, tip.y - Math.sin(a + 0.5) * head)
+    ctx.closePath()
+    ctx.fill()
+
+    if (d.id === selectedId) {
+      ctx.beginPath()
+      ctx.arc(x, y, style.ringRadius / scale, 0, Math.PI * 2)
+      ctx.strokeStyle = style.ring
+      ctx.lineWidth = 3 / scale
+      ctx.stroke()
+    }
+    ctx.beginPath()
+    if (d.kind === 'ac') {
+      const r = style.radius / scale
+      ctx.roundRect(x - r, y - r * 0.8, r * 2, r * 1.6, 4 / scale)
+    } else {
+      ctx.arc(x, y, style.radius / scale, 0, Math.PI * 2)
+    }
+    ctx.fillStyle = style.color
+    ctx.fill()
+    ctx.strokeStyle = style.text
+    ctx.lineWidth = 1.5 / scale
+    ctx.stroke()
+    ctx.fillStyle = style.text
+    ctx.font = `700 ${(d.kind === 'ac' ? 9 : 10) / scale}px system-ui, sans-serif`
+    ctx.fillText(d.kind === 'ac' ? 'AC' : '팬', x, y + 0.5 / scale)
+
+    if (rotatable) {
+      ctx.beginPath()
+      ctx.arc(tip.x + Math.cos(a) * (6 / scale), tip.y + Math.sin(a) * (6 / scale), style.handleRadius / scale, 0, Math.PI * 2)
+      ctx.fillStyle = '#ffffff'
+      ctx.fill()
+      ctx.strokeStyle = style.color
+      ctx.lineWidth = 2 / scale
+      ctx.stroke()
+    }
   }
 }
 
@@ -597,9 +801,9 @@ function drawMarkers(ctx: CanvasRenderingContext2D, markers: PlanMarker[], selec
   const style = LAYOUT_STYLE.marker
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
-  ctx.font = `600 ${style.font / scale}px system-ui, sans-serif`
   for (const m of markers) {
     const { x, y } = m.position
+    const r = style.radius / scale
     if (m.id === selectedId) {
       ctx.beginPath()
       ctx.arc(x, y, style.ringRadius / scale, 0, Math.PI * 2)
@@ -608,14 +812,25 @@ function drawMarkers(ctx: CanvasRenderingContext2D, markers: PlanMarker[], selec
       ctx.stroke()
     }
     ctx.beginPath()
-    ctx.arc(x, y, style.radius / scale, 0, Math.PI * 2)
-    ctx.fillStyle = style.fill
+    ctx.arc(x, y, r, 0, Math.PI * 2)
+    ctx.fillStyle = m.color
     ctx.fill()
-    ctx.strokeStyle = style.text
+    ctx.strokeStyle = style.edge
     ctx.lineWidth = 1.5 / scale
     ctx.stroke()
+    // The type icon in white; thicker lines so it reads at this size.
+    drawGlyph(ctx, m.type, x, y, (style.radius * 1.5) / scale, style.text, 1.6)
+
+    // Number badge, matching the playback's per-diffuser list.
+    const bx = x + r * 0.78
+    const by = y + r * 0.78
+    ctx.beginPath()
+    ctx.arc(bx, by, style.badge / scale, 0, Math.PI * 2)
+    ctx.fillStyle = style.badgeFill
+    ctx.fill()
     ctx.fillStyle = style.text
-    ctx.fillText(m.label, x, y + 0.5 / scale)
+    ctx.font = `700 ${style.font / scale}px system-ui, sans-serif`
+    ctx.fillText(m.label, bx, by + 0.5 / scale)
   }
 }
 

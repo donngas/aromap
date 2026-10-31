@@ -22,7 +22,11 @@
   /* Outside the palette on purpose: errors need a distinct hue to be noticed. */
   --error: #8f3a2c;
   --error-soft: #efe0da;
-  --stage: var(--mist-ivory);
+  /* Same as the page, so the header and the plan read as one open surface. */
+  --stage: var(--bg);
+
+  /* App header height; the workspace lays its floating controls below it. */
+  --topbar-h: 52px;
 
   font-family: system-ui, -apple-system, 'Segoe UI', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
   font-size: 14px;
@@ -30,6 +34,13 @@
   color: var(--text);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
+}
+
+@media (max-width: 640px) {
+  :root {
+    /* Logo row plus steps row. */
+    --topbar-h: 76px;
+  }
 }
 
 * {

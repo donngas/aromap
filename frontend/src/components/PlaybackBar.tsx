@@ -1,4 +1,4 @@
-import { RAMP_GRADIENT } from '../simulation/heatmap.ts'
+import { formatSimTime as formatTime } from '../simulation/format.ts'
 
 interface PlaybackBarProps {
   /** Sample times in seconds. */
@@ -83,11 +83,6 @@ export function PlaybackBar({
             ))}
           </select>
         )}
-        <span className="playback__legend">
-          옅음
-          <span className="playback__ramp" style={{ background: RAMP_GRADIENT }} />
-          짙음
-        </span>
         <button type="button" className="link-button" onClick={() => onVisible(false)}>
           결과 숨기기
         </button>
@@ -96,13 +91,3 @@ export function PlaybackBar({
   )
 }
 
-/** "45초", "12분 30초", "2시간 15분": seconds are dropped once hours appear. */
-function formatTime(seconds: number): string {
-  const total = Math.round(seconds)
-  const h = Math.floor(total / 3600)
-  const m = Math.floor((total % 3600) / 60)
-  const s = total % 60
-  if (h > 0) return m === 0 ? `${h}시간` : `${h}시간 ${m}분`
-  if (m === 0) return `${s}초`
-  return s === 0 ? `${m}분` : `${m}분 ${s}초`
-}

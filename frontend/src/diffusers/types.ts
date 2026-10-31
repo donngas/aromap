@@ -18,6 +18,7 @@ export interface DiffuserDraft {
   dailyHours: number | null
   /** Powered types only. */
   intensity: Intensity | null
+  /** One of SCENTS' labels (diffusers/scents.ts); sets the diffuser's colour. */
   scentFamily: string | null
   memo: string
   usesExampleValues: boolean
@@ -42,7 +43,6 @@ export const TYPE_INFO: Record<DiffuserType, TypeInfo> = {
 
 export const INTENSITY_LABELS: Record<Intensity, string> = { low: '약', mid: '중', high: '강' }
 
-export const SCENT_FAMILIES = ['시트러스', '플로럴', '우디', '허브·그린', '머스크·파우더리', '스위트', '기타']
 
 export function createDiffuser(type: DiffuserType, index: number): DiffuserDraft {
   return {

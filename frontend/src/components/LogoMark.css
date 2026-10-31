@@ -1,0 +1,18 @@
+.logo-mark {
+  position: relative;
+  display: inline-block;
+}
+
+.logo-mark img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* Sphere position in logo-mark.png (centre 82.3% / 78.4%, sprite 41px of 360px). */
+.logo-mark .logo-mark__sphere {
+  position: absolute;
+  left: 76.4%;
+  top: 69.3%;
+  width: 11.4%;
+}

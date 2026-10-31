@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import './App.css'
 import { ApiError, uploadPlanImage } from './api/floorPlans.ts'
+import { LogoMark } from './components/LogoMark.tsx'
 import type { DiffuserDraft } from './diffusers/types.ts'
 import type { RecognitionDraft } from './floorPlan/layout.ts'
 import { loadPlanImage, type PlanImage } from './floorPlan/loadImage.ts'
@@ -219,12 +220,19 @@ export default function App() {
   }
 
   return (
-    <div className={`app${fullHeight ? ' app--fill' : ''}`}>
+    <div className={`app${fullHeight ? ' app--fill' : ''}${showWorkspace ? ' app--overlay-header' : ''}`}>
       <header className="topbar">
-        <h1>Aromap</h1>
-        <ol className="steps">
+        <h1 className="topbar__brand">
+          <LogoMark className="topbar__mark" />
+          <span className="topbar__wordmark">AROMAP</span>
+        </h1>
+        <ol className="steps" aria-label="진행 단계">
           {STEPS.map((label, i) => (
-            <li key={label} className={i === currentIndex ? 'is-current' : i < currentIndex ? 'is-done' : ''}>
+            <li
+              key={label}
+              className={i === currentIndex ? 'is-current' : i < currentIndex ? 'is-done' : ''}
+              aria-current={i === currentIndex ? 'step' : undefined}
+            >
               {i + 1}. {label}
             </li>
           ))}

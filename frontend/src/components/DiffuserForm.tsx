@@ -1,14 +1,15 @@
 import { EXAMPLE_SPECS, estimateConsumption, validateDiffuser } from '../diffusers/emission.ts'
+import { SCENTS, scentColor } from '../diffusers/scents.ts'
 import {
   createDiffuser,
   DIFFUSER_TYPES,
   INTENSITIES,
   INTENSITY_LABELS,
-  SCENT_FAMILIES,
   TYPE_INFO,
   type DiffuserDraft,
   type DiffuserType,
 } from '../diffusers/types.ts'
+import { DiffuserGlyph } from './DiffuserGlyph.tsx'
 
 interface DiffuserFormProps {
   diffusers: DiffuserDraft[]
@@ -72,6 +73,8 @@ function DiffuserCard({ draft, onChange, onRemove }: DiffuserCardProps) {
   const example = EXAMPLE_SPECS[draft.type]
   const errors = validateDiffuser(draft)
   const estimate = estimateConsumption(draft)
+  // Icons follow the chosen scent's colour as soon as it is picked.
+  const color = scentColor(draft.scentFamily)
 
   const changeType = (type: DiffuserType) =>
     onChange({
@@ -82,7 +85,10 @@ function DiffuserCard({ draft, onChange, onRemove }: DiffuserCardProps) {
 
   return (
     <fieldset className="card">
-      <div className="row row--between">
+      <div className="row row--between card__head">
+        <span className="card__glyph" style={{ borderColor: color }}>
+          <DiffuserGlyph type={draft.type} color={color} size={34} />
+        </span>
         <input
           className="card__name"
           aria-label="디퓨저 이름"
@@ -106,6 +112,7 @@ function DiffuserCard({ draft, onChange, onRemove }: DiffuserCardProps) {
               title={TYPE_INFO[type].description}
               onClick={() => changeType(type)}
             >
+              <DiffuserGlyph type={type} color={draft.type === type ? 'currentColor' : color} size={18} />
               {TYPE_INFO[type].label}
             </button>
           ))}
@@ -178,15 +185,16 @@ function DiffuserCard({ draft, onChange, onRemove }: DiffuserCardProps) {
       <div className="form-row">
         <span className="form-row__label">향 계열</span>
         <div className="choices">
-          {SCENT_FAMILIES.map((family) => (
+          {SCENTS.map(({ label, color: swatch }) => (
             <button
-              key={family}
+              key={label}
               type="button"
-              className={draft.scentFamily === family ? 'is-selected' : ''}
-              aria-pressed={draft.scentFamily === family}
-              onClick={() => onChange({ scentFamily: draft.scentFamily === family ? null : family })}
+              className={draft.scentFamily === label ? 'is-selected' : ''}
+              aria-pressed={draft.scentFamily === label}
+              onClick={() => onChange({ scentFamily: draft.scentFamily === label ? null : label })}
             >
-              {family}
+              <span className="swatch" style={{ background: swatch }} aria-hidden="true" />
+              {label}
             </button>
           ))}
         </div>
