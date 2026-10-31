@@ -291,6 +291,19 @@ def test_colored_home_windows(colored_home: Layout, start, end) -> None:
     assert _has_opening(colored_home.windows, start, end), colored_home.windows
 
 
+@pytest.mark.parametrize(
+    "start, end",
+    [
+        ((174, 92), (174, 205)),  # sliding door, kitchen to living room
+        ((236, 316), (236, 371)),  # sliding door, washroom to bedroom
+        ((408, 203), (445, 203)),  # door leaf drawn as a thin rectangle
+    ],
+)
+def test_colored_home_inner_glazing_is_door(colored_home: Layout, start, end) -> None:
+    assert _has_opening(colored_home.doors, start, end), colored_home.doors
+    assert not _has_opening(colored_home.windows, start, end)
+
+
 # Line drawing: walls are two thin gray lines with white between them.
 
 

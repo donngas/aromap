@@ -20,6 +20,9 @@ MIN_FOOTPRINT_RATIO = 0.4
 OUTLINE_TOLERANCE_RATIO = 0.5
 # Barriers are drawn at least this thick (px) so thin-wall plans still seal.
 MIN_BARRIER_PX = 3
+# A segment whose middle lies deeper than this many wall thicknesses inside the
+# outline is on an inner wall (outer-wall segments sit about half a thickness in).
+INTERIOR_DEPTH_RATIO = 2
 
 
 def estimate_footprint(
@@ -50,6 +53,21 @@ def estimate_footprint(
     if len(polygon) < 3:
         return None
     return [(float(px), float(py)) for px, py in polygon[:, 0]]
+
+
+def is_interior(
+    segment: WallSegment, outline: list[tuple[float, float]], thickness: int
+) -> bool:
+    """Whether a wall segment lies inside the outline, away from the outer walls.
+
+    The outline follows the outer wall faces, so a segment on an outer wall sits
+    about half a wall thickness inside it; one on a wall between rooms (e.g.
+    between the sales floor and the stockroom) sits much deeper.
+    """
+    (x1, y1), (x2, y2) = segment.endpoints
+    polygon = np.array(outline, np.float32).reshape(-1, 1, 2)
+    depth = cv2.pointPolygonTest(polygon, ((x1 + x2) / 2, (y1 + y2) / 2), measureDist=True)
+    return depth > INTERIOR_DEPTH_RATIO * max(MIN_BARRIER_PX, thickness)
 
 
 def _outdoors(walls: np.ndarray) -> np.ndarray:
