@@ -110,6 +110,7 @@ automatically loaded by the application.
 | `AROMAP_QUEUE_CAPACITY` | `4` | Waiting recognition and simulation jobs, in addition to one running job |
 | `AROMAP_RECOGNITION_CALLABLE` | `app.floor_plans.recognition.interface:recognize_floor_plan` | Importable recognition function; blank uses the default |
 | `AROMAP_RECOGNITION_TIMEOUT_SECONDS` | `60` | Hard recognition deadline in seconds, including child startup |
+| `AROMAP_SIMULATION_MAX_WORKING_BYTES` | `536870912` | Estimated simulation working-memory budget in bytes; not a hard process limit |
 
 The storage root contains `registry.sqlite3`, `uploads/<image_id>/image.png`, and
 `results/<job_id>.json`. Public IDs are randomly generated; client filenames never
@@ -387,7 +388,7 @@ The bounding rectangle rounds upward to cover the polygon; cell centers determin
 active cells. Connections consider right/down neighbors once (four-neighbor graph),
 exclude segments crossing outdoor areas/holes, and block intersections with walls.
 Open door segments are subtracted from their parent wall; closed openings remain
-barriers. Open windows are rejected until their physical behavior is defined.
+barriers. Open exterior windows and doors are mapped separately to boundary cells.
 Walls must be split at junctions, and overlapping walls/openings are rejected.
 
 Each enabled placement initially maps to its containing active cell with weight 1.
@@ -437,8 +438,8 @@ Provisional physical parameters in `simulations/limits.py`:
 | Uniform removal | 0.5 air changes/hour, converted to 0.5/3600 per second. This is an illustrative residential assumption, informed by variable residential measurements discussed in [this air-exchange study](https://pmc.ncbi.nlm.nih.gov/articles/PMC5369024/), not an inference from the floor plan. No additional chemical or surface loss is added. |
 
 The spreading parameter represents unresolved mixing, not molecular diffusion or
-directional airflow. Keep transport separate from sources/removal for future
-velocity fields driven by fans or A/C; a recirculating fan is not automatically
+directional airflow. Directional transport uses a separate approximate field;
+a recirculating fan is not automatically
 fresh-air exchange. Door width affects represented connections, without a second
 width multiplier. Window size alone cannot determine ventilation: pressure, wind,
 and thermal driving forces also matter ([NIST CONTAM documentation](https://www.nist.gov/publications/contam-user-guide-and-program-documentation-version-34)).
@@ -525,10 +526,8 @@ These are synthetic rectangular-layout checks, not performance guarantees. Peak
 RSS includes Python/native libraries; long, dense, many-channel combinations may
 hit runtime/memory budgets even when individual preparation limits pass.
 
-Future presets can choose separate spreading and removal parameters. Temperature
-corrections remain 1 until supported product data exists; directional airflow will
-add a separate transport operator. The general sparse LU solve supports asymmetric
-operators, but no fan/A/C airflow field or advection term is implemented now.
+Temperature corrections remain 1 until supported product data exists. The solver
+also supports the idealized directional transport described below.
 
 ### Standalone visual preview
 
@@ -830,8 +829,8 @@ Simulation requests carry metric geometry, definitions,
 placements, opening states, conditions, and settings for one configuration. They omit image
 bytes and inactive scenarios. Preparation validates references, resolves omitted
 opening states to closed, and records explicit assumptions in a detached input.
-Open doors connect spaces; windows are recognized now but open-window physical
-behavior is still undecided. Metric/grid preparation is implemented independently;
+Open interior doors connect spaces; open exterior doors and windows exchange air
+using the approximate boundary model. Metric/grid preparation is implemented independently;
 the solver and HTTP execution path are implemented.
 
 The HTTP contract now describes grid alignment, channel/time/array ordering,
@@ -841,3 +840,86 @@ context, not the browser's project document.
 Results will represent approximate relative concentrations under stated assumptions,
 not accurate real airflow or perceived scent intensity. Test the engine
 independently of recognition using predefined layouts under `tests/fixtures/layouts/`.
+
+### Idealized airflow
+
+Airflow is a steady 2D scenario, not measured room airflow or CFD. Diffuser
+concentration remains a height-averaged relative quantity per square meter. The
+model adds one signed air flux per connected cell edge, measured in m²/s per
+unit room height. Fan and recirculating A/C devices generate a localized Gaussian
+initial velocity (0.025, 0.05, or 0.1 m/s for low, medium, high; radii 1 m and
+1.5 m respectively). These are illustrative engineering presets, not device
+specifications. Direction angles are degrees clockwise from image right (y down).
+
+The initial edge fluxes are projected to satisfy incompressible mass conservation.
+The continuous analogue is `u = u* - grad(phi)`, `laplacian(phi) = div(u*)`;
+the graph discretization solves a sparse Laplacian with no wall-normal flow and
+specified idealized exterior potentials. Phi is a correction velocity potential,
+not a calibrated physical pressure. The sparse graph equation is solved with
+Jacobi-preconditioned conjugate gradients, relative tolerance 1e-10, absolute
+tolerance 1e-14, at most 10,000 iterations, and deadline checks. Nonconvergence
+fails with `airflow_failed` and suggests a coarser grid or simpler layout. A
+conservative projection working-set estimate is checked before allocation; this
+is not a hard process RSS limit. Projection and scent-solver peak estimates are
+checked separately because their temporary matrices do not coexist. A synthetic
+40 m square, 25 cm grid (25,600 cells), one-fan projection took about 0.27 s on
+the development machine; this is not a deployment performance guarantee. This follows
+the projection principle in
+[Vreman (2014)](https://doi.org/10.1016/j.jcp.2014.01.035); one projection of a
+prescribed push is not a Navier–Stokes calculation. Wind presets yield approximate
+potential amplitudes 0, 0.02, 0.05 m/s for calm, moderate, breezy. They do not
+predict actual wind pressures or window ventilation. Wall geometry and grid
+resolution limit how faithfully flow turns around obstacles.
+
+The scent solver uses conservative first-order upwind finite-volume advection;
+see [NIST FiPy finite-volume equations](https://pages.nist.gov/fipy/en/stable/numerical/discret.html).
+This can introduce numerical spreading; refinement comparisons are necessary.
+On one 4 m square test with a medium fan, 60 s duration and 0.005 m²/s background
+mixing, area-integrated relative field L1 differences versus 10 cm cells were
+about 28% at 40 cm and 18% at 20 cm. The default 25 cm grid differed by about
+22% from a 12.5 cm run of the same case. A 0.25 s time step differed from 0.0625 s
+by about 0.1% on the 20 cm grid. These comparisons include source discretization
+and are neither real-world validation nor a universal error bound; near-source
+plume shape and results on other layouts can vary substantially.
+An opening removes scent in net outgoing flow and, separately, a balanced two-way
+exchange equivalent to 0.001, 0.003, or 0.006 m/s times represented width per
+unit height. Incoming outdoor air has zero modeled fragrance. These exchange
+velocities are illustrative, not experimentally calibrated, and apply in addition
+to net flow. Room-wide removal represents *other* background ventilation and
+must not include the same openings again. A recirculating fan or A/C is not
+fresh-air ventilation. Mixing presets map low/medium/high to 0.001/0.005/0.013
+m²/s effective diffusivity; they represent unresolved mixing rather than purely
+molecular diffusion ([Cheng et al.](https://pubmed.ncbi.nlm.nih.gov/21456572/)).
+
+Optional request fields, preserving the original request format when omitted:
+
+```json
+{
+  "settings": {"mixing_preset": "medium"},
+  "conditions": {"removal_rate_per_s": 0.0001388889},
+  "airflow": {
+    "outdoor_conditions": "moderate",
+    "wind_direction_degrees": 0,
+    "devices": [{"id": "fan-1", "type": "fan", "position_m": {"x": 2, "y": 1},
+                 "direction_degrees": 90, "strength": "medium"}]
+  }
+}
+```
+
+`mixing_preset` and an explicit `effective_diffusivity_m2_per_s` are mutually
+exclusive. Devices also accept type `ac`; up to eight are allowed, each must be
+in active indoor space. An AC is assumed to recirculate. Clients may supply
+background ventilation as `removal_rate_per_s`; this should exclude modeled openings.
+Omitted airflow defaults to calm with no devices. Opening states still default to
+closed. Classification uses closed wall/domain enclosure faces and tests for walls
+between the opening and the boundary, including at ray endpoints and courtyards.
+Exterior wall centerlines may be offset by up to 1.5 cells (minimum 0.15 m).
+An offset wall that cannot be established as the boundary of a closed wall
+enclosure is ambiguous; clients may set an opening's `boundary_kind` to
+`"interior"` or `"exterior"` to resolve it. An exterior override must still be
+near the domain edge and cannot contradict another enclosing wall. The model
+warns when exterior openings are inferred; incomplete or incorrect floor-plan
+geometry can still be ambiguous. An open window too far from a boundary or an
+opening that cannot be mapped to an indoor cell fails preparation. Openings are sampled into indoor
+cells and their widths conserved. No outdoor cells are simulated. Furniture
+resistance and height-dependent flow are not implemented.

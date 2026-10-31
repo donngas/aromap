@@ -149,7 +149,7 @@ def test_unsafe_source_mapping_is_rejected():
         prepare_run(SimulationConfiguration.model_validate(body), **OPTIONS)
 
 
-def test_invalid_polygon_and_open_window_are_rejected():
+def test_invalid_polygon_and_interior_open_window_are_rejected():
     body = configuration().model_dump()
     body["geometry_m"]["indoor_domain"]["boundary"] = [
         {"x": x, "y": y} for x, y in ((0, 0), (2, 1), (0, 1), (2, 0))
@@ -158,8 +158,8 @@ def test_invalid_polygon_and_open_window_are_rejected():
         prepare_input(SimulationConfiguration.model_validate(body), **OPTIONS)
     body = divided_room(True).model_dump()
     body["geometry_m"]["windows"] = body["geometry_m"].pop("doors")
-    with pytest.raises(PreparationError, match="Open-window behavior"):
-        prepare_input(SimulationConfiguration.model_validate(body), **OPTIONS)
+    with pytest.raises(PreparationError, match="not near the indoor boundary"):
+        prepare_run(SimulationConfiguration.model_validate(body), **OPTIONS)
 
 
 def test_resource_limits_run_before_source_resolution():

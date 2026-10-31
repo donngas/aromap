@@ -10,6 +10,8 @@ from pydantic import ValidationError
 
 from app.diffusers.models import ConsumerDiffuserDefinition
 from app.simulations.engine.grid import build_grid, grid_extent
+from app.simulations.engine.exterior import map_exterior_openings
+from app.simulations.engine.airflow import build_airflow
 from app.simulations.engine.models import PreparedSimulation, ResolvedInitialState
 from app.simulations.engine.state import initial_state_fingerprint, validate_initial_state
 from app.simulations.emissions import resolve_emission
@@ -111,6 +113,8 @@ def _prepare_input(
     limits.output_bytes(len(times), len(enabled), rows, columns)
 
     diffusion = configuration.settings.effective_diffusivity_m2_per_s
+    if configuration.settings.mixing_preset is not None:
+        diffusion = {"low": 0.001, "medium": 0.005, "high": 0.013}[configuration.settings.mixing_preset]
     removal = configuration.conditions.removal_rate_per_s
     diffusion = diffusion if diffusion is not None else effective_diffusivity_m2_per_s
     removal = removal if removal is not None else removal_rate_per_s
@@ -137,12 +141,13 @@ def _prepare_input(
         "sources": [source.model_dump(mode="json") for source in sources],
         "duration_s": configuration.settings.duration_s, "sample_times_s": times,
         "grid_cell_size_m": cell_size, "parameters": parameters.model_dump(mode="json"),
+        "airflow": configuration.airflow.model_dump(mode="json"),
         "assumptions": [
             "Coordinates and lengths are supplied in meters; no image scaling is performed.",
-            "Unspecified door/window states are closed; open-window behavior is unsupported.",
+            "Unspecified door/window states are closed.",
             "Source resolver supplied explicit rates and handled placement overrides.",
             "One relative unit is a surrogate for 1 mg consumed formulation; fields are relative units/m², not perceived intensity.",
-            "Uniform effective spreading and removal; no directional airflow or additional chemical/surface losses.",
+            "Background mixing and removal are uniform; airflow is an idealized steady 2D approximation, not measured CFD.",
         ],
         "initial_state_fingerprint": None,
     }
@@ -150,6 +155,12 @@ def _prepare_input(
         payload["assumptions"].append(f"Caller/default effective spreading: {diffusion} m²/s; provisional mixing parameter, not molecular diffusivity.")
     if configuration.conditions.removal_rate_per_s is None:
         payload["assumptions"].append(f"Caller/default uniform removal: {removal} /s ({removal * 3600} air changes/hour equivalent).")
+    payload["assumptions"].append(
+        f"Airflow: outdoor conditions {configuration.airflow.outdoor_conditions}, "
+        f"wind direction {configuration.airflow.wind_direction_degrees} degrees toward; "
+        f"{len(configuration.airflow.devices)} recirculating devices. "
+        "Opening exchange and fan strength use uncalibrated engineering presets; background removal excludes modeled openings."
+    )
     fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
     return SimulationInput(input_fingerprint=fingerprint, **payload)
 
@@ -173,6 +184,20 @@ def prepare_run(
     estimated_working_bytes = size + rows * columns * (128 + channels * 8 * 3)
     execution_limits.check_memory(estimated_working_bytes)
     grid = build_grid(input, limits)
+    boundary, exterior_ids = map_exterior_openings(input.geometry, grid)
+    if exterior_ids:
+        grid = build_grid(input, limits, exterior_ids)
+        boundary, exterior_ids = map_exterior_openings(input.geometry, grid)
+        grid = replace(grid, warnings=(*grid.warnings,
+            "Exterior openings are inferred from proximity to the indoor boundary; review results when interior walls lie close to the perimeter."))
+    airflow = None
+    if input.airflow.devices or boundary:
+        # Output snapshots and scent-solver factorization are allocated later,
+        # after projection has returned. Count only arrays resident now.
+        resident_bytes = (grid.active_mask.nbytes + grid.active_index.nbytes + grid.connections.nbytes
+                          + sum(s.cell_indices.nbytes + s.weights.nbytes for s in grid.source_weights))
+        airflow = build_airflow(grid, input.airflow, boundary, input.geometry,
+                                limits=execution_limits, resident_bytes=resident_bytes)
     if initial_state is not None:
         initial_state = validate_initial_state(initial_state, grid, input.model_version)
         payload = input.model_dump(exclude={"input_fingerprint"})
@@ -181,4 +206,4 @@ def prepare_run(
         input = SimulationInput(input_fingerprint=fingerprint, **payload)
     if size > limits.output_warning_bytes:
         grid = replace(grid, warnings=(*grid.warnings, "Large sampled payload; reduce samples, channels, or grid resolution for browser playback."))
-    return PreparedSimulation(input, grid, size, initial_state, estimated_working_bytes, execution_limits)
+    return PreparedSimulation(input, grid, size, initial_state, estimated_working_bytes, execution_limits, airflow, boundary)

@@ -177,7 +177,10 @@ class Jobs:
 
     async def run_simulation(self, job_id: str):
         expires = time.time() + self.settings.retention_seconds
-        process = multiprocessing.get_context("spawn").Process(target=execute_simulation, args=(str(self.storage.root), job_id, expires))
+        process = multiprocessing.get_context("spawn").Process(
+            target=execute_simulation,
+            args=(str(self.storage.root), job_id, expires, self.settings.simulation_max_working_bytes),
+        )
         process.start()
         try:
             deadline = asyncio.get_running_loop().time() + ExecutionLimits().max_runtime_s

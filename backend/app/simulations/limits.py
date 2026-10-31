@@ -67,7 +67,7 @@ class ExecutionLimits:
         if (not isinstance(estimated_bytes, (int, float)) or isinstance(estimated_bytes, bool)
                 or estimated_bytes < 0 or estimated_bytes > self.max_working_bytes
                 or not math.isfinite(estimated_bytes)):
-            raise PreparationError("resource_limit", "Estimated solver working memory exceeds the configured budget.")
+            raise PreparationError("resource_limit", "Estimated solver working memory exceeds the configured budget; use a larger cell size or reduce channels or samples.")
 
     def check_deadline(self, started_at: float):
         if time.monotonic() - started_at >= self.max_runtime_s:

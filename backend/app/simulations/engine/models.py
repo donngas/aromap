@@ -50,6 +50,8 @@ class PreparedSimulation:
     initial_state: "ResolvedInitialState | None" = None
     estimated_working_bytes: int = 0
     execution_limits: ExecutionLimits = field(default_factory=ExecutionLimits)
+    airflow_field: object | None = None
+    exterior_openings: tuple = ()
 
     @property
     def channels(self) -> tuple["StateChannel", ...]:
