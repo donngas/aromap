@@ -15,6 +15,7 @@ PASS_IMAGES = [
     FIXTURES / "bakery_cafe_plan.png",
     FIXTURES / "apartment_plan.png",
     FIXTURES / "colored_home_plan.png",
+    FIXTURES / "three_bed_home_plan.png",
 ]
 # Images in fixtures/local/fail are git-ignored (unclear or unrecorded redistribution
 # rights; see local/SOURCES.md) and recognized poorly. Their tests are skipped when
@@ -34,6 +35,7 @@ WARNED_FAILURES = [
 # Plans with specific accuracy checks below.
 NAMED = {
     "cafe": FIXTURES / "cafe_plan.png",  # listing-style shop plan
+    "three_bed_home": FIXTURES / "three_bed_home_plan.png",  # bold walls, many rooms
     "cad_cafe": LOCAL_FAIL / "cad_cafe_plan.png",  # CAD drawing
     "colored_home": FIXTURES / "colored_home_plan.png",  # colored, dimensioned
     "warehouse": LOCAL_FAIL / "warehouse_plan.png",  # gray solid walls
@@ -303,6 +305,22 @@ def test_colored_home_windows(colored_home: Layout, start, end) -> None:
 def test_colored_home_inner_glazing_is_door(colored_home: Layout, start, end) -> None:
     assert _has_opening(colored_home.doors, start, end), colored_home.doors
     assert not _has_opening(colored_home.windows, start, end)
+
+
+# Bold-wall home plan: doors either side of an inner wall.
+
+
+@pytest.mark.parametrize(
+    "start, end",
+    [
+        ((1134, 595), (1198, 595)),  # bathroom, hinged left of the wall between rooms
+        ((1223, 595), (1301, 595)),  # master bedroom, hinged right of it
+    ],
+)
+def test_three_bed_home_doors_either_side_of_a_wall(drafts, start, end) -> None:
+    draft = drafts["three_bed_home"]
+    assert _has_opening(draft.floor_plan.layout.doors, start, end), draft.floor_plan.layout.doors
+    assert not any("Skipped" in warning for warning in draft.warnings)
 
 
 # Synthetic plans covering each supported drawing style; they need no image files.

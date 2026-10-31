@@ -87,6 +87,38 @@ def test_door_covers_its_swing_and_hinge_stub_stays_wall() -> None:
     assert WallSegment("horizontal", 100, 0, 280) in walls
 
 
+def _gap_between(left_end: int, right_start: int) -> list[WallSegment]:
+    return [
+        WallSegment("horizontal", 150, 0, left_end),
+        WallSegment("horizontal", 150, right_start, 300),
+        WallSegment("vertical", 0, 0, 300),
+        WallSegment("vertical", 300, 0, 300),
+    ]
+
+
+def test_doors_either_side_of_a_wall_are_separate() -> None:
+    # A restroom door (hinged at x=140) and a stockroom door (hinged at x=160)
+    # swing away from the 20 px of wall between them, where the wall between those
+    # rooms meets this one.
+    details = _swing(_blank(), (140, 150), 60, 180, 270)
+    _swing(details, (160, 150), 60, 270, 360)
+
+    walls, openings = find_openings(_gap_between(80, 220), _blank(), details, thickness=10)
+
+    assert _door_spans(openings) == [(80, 140), (160, 220)]
+    assert WallSegment("horizontal", 150, 0, 300) in walls
+
+
+def test_double_door_leaves_meeting_in_the_middle_are_one_door() -> None:
+    # Two leaves hinged at the gap ends; a few pixels between their tips.
+    details = _swing(_blank(), (80, 150), 66, 270, 360)
+    _swing(details, (220, 150), 66, 180, 270)
+
+    _, openings = find_openings(_gap_between(80, 220), _blank(), details, thickness=10)
+
+    assert _door_spans(openings) == [(80, 220)]
+
+
 def test_door_frame_beside_arc_joins_door() -> None:
     # The arc stops 5 px (under one wall thickness) short of each wall end: door frames.
     segments = [

@@ -123,23 +123,25 @@ class _Symbols:
     def find(self, gap: WallSegment) -> list[Opening]:
         """Openings in the gap: doors for swing arcs, windows for glazing lines.
 
-        A door covers what its arcs swing across (two arcs for a double door). A
-        leftover under one wall thickness at a gap end is a door frame and joins the
-        door; a longer one is checked for glazing (e.g. a storefront window beside
-        the entrance) and otherwise stays wall. Gaps too wide for a door can only
-        be windows (glass walls). An empty list means no symbol.
+        A door covers what its arcs swing across (two touching arcs for a double
+        door). Arcs with wall between them are separate doors, e.g. a restroom door
+        and a stockroom door either side of the wall between those rooms; the piece
+        between them stays wall. A leftover under one wall thickness at a gap end is
+        a door frame and joins the door; a longer one is checked for glazing (e.g. a
+        storefront window beside the entrance) and otherwise stays wall. Gaps too
+        wide for a door can only be windows (glass walls). An empty list means no
+        symbol.
         """
         door_sized = gap.end - gap.start <= self.max_door_gap
         arcs = self.arcs_along(gap.orientation) if door_sized else []
-        spans = swing_spans(arcs, gap, self.thickness)
+        spans = _merge_spans(swing_spans(arcs, gap, self.thickness), self.thickness)
         if spans:
-            start = min(s for s, _ in spans)
-            end = max(e for _, e in spans)
-            if start - gap.start <= self.thickness:
-                start = gap.start
-            if gap.end - end <= self.thickness:
-                end = gap.end
-            found = [Opening("door", replace(gap, start=start, end=end))]
+            if spans[0][0] - gap.start <= self.thickness:
+                spans[0] = (gap.start, spans[0][1])
+            if gap.end - spans[-1][1] <= self.thickness:
+                spans[-1] = (spans[-1][0], gap.end)
+            found = [Opening("door", replace(gap, start=s, end=e)) for s, e in spans]
+            start, end = spans[0][0], spans[-1][1]
             for side in (replace(gap, end=start), replace(gap, start=end)):
                 if side.end - side.start >= self.min_gap and _has_glazing(
                     self.lines, side, self.thickness
@@ -149,6 +151,19 @@ class _Symbols:
         if _has_glazing(self.lines, gap, self.thickness):
             return [Opening("window", gap)]
         return []
+
+
+def _merge_spans(
+    spans: list[tuple[float, float]], tolerance: float
+) -> list[tuple[float, float]]:
+    """Sorted spans with those touching within ``tolerance`` merged into one."""
+    merged: list[tuple[float, float]] = []
+    for start, end in sorted(spans):
+        if merged and start - merged[-1][1] <= tolerance:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
 
 
 def _bridge_collinear_gaps(
