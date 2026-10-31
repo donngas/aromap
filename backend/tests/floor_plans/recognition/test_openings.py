@@ -217,6 +217,43 @@ def test_gap_without_symbol_stays_open_floor() -> None:
     assert sorted(walls, key=repr) == sorted(segments, key=repr)
 
 
+def test_half_open_door_leaf_is_a_door() -> None:
+    # A stockroom door drawn half open: its leaf (a thin double line) runs from the
+    # hinge at x=180 at 40 degrees, as long as the 100 px gap, with no usable arc.
+    lines = _blank()
+    tip = (round(180 - 100 * np.cos(np.radians(40))), round(150 - 100 * np.sin(np.radians(40))))
+    cv2.line(lines, (180, 150), tip, 255, 1)
+    cv2.line(lines, (183, 150), (tip[0] + 3, tip[1]), 255, 1)
+
+    walls, openings = find_openings(_gap_between(80, 180), lines, _blank(), thickness=10)
+
+    assert [(o.kind, o.span) for o in openings] == [
+        ("door", WallSegment("horizontal", 150, 80, 180))
+    ]
+
+
+def test_counter_edge_at_gap_end_is_not_a_door_leaf() -> None:
+    # A counter edge leaves the wall end square to it: not a door leaf.
+    lines = _blank()
+    cv2.line(lines, (180, 150), (180, 60), 255, 1)
+
+    _, openings = find_openings(_gap_between(80, 180), lines, _blank(), thickness=10)
+
+    assert openings == []
+
+
+def test_dashed_lines_across_gap_are_open_floor() -> None:
+    # Two dashed lines across the gap mark an open passage, not a window.
+    lines = _blank()
+    for x in range(80, 180, 20):
+        cv2.line(lines, (x, 147), (x + 13, 147), 255, 1)
+        cv2.line(lines, (x, 153), (x + 13, 153), 255, 1)
+
+    _, openings = find_openings(_gap_between(80, 180), lines, _blank(), thickness=10)
+
+    assert openings == []
+
+
 def test_wall_ending_in_open_room_is_not_bridged() -> None:
     segments = [
         WallSegment("horizontal", 100, 0, 200),
