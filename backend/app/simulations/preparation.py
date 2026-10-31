@@ -27,7 +27,7 @@ from app.simulations.models import (
     SimulationConfiguration, SimulationInput,
 )
 
-PREPARATION_VERSION = "square-center-grid-v4"
+PREPARATION_VERSION = "square-center-grid-v5"
 SourceResolver = Callable[[ConsumerDiffuserDefinition, DiffuserPlacement], ResolvedEmissionProfile]
 
 
