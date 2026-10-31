@@ -9,7 +9,14 @@ from typing import Literal
 
 import numpy as np
 
-from app.floor_plans.recognition.doors import find_door_arcs, swing_spans
+from app.floor_plans.recognition.doors import (
+    MAX_HINGE_OFFSET_RADIUS_RATIO,
+    MAX_HINGE_OFFSET_RATIO,
+    MIN_SWING_IN_GAP,
+    DoorArc,
+    find_door_arcs,
+    swing_spans,
+)
 from app.floor_plans.recognition.walls import TOUCH_TOLERANCE_PX, WallSegment
 
 # Opening widths as multiples of the wall thickness: roughly 0.6-3 m for
@@ -36,11 +43,15 @@ MIN_GLAZING_LINES = 2
 # wider one reaches floor-color edges.
 GLAZING_BAND_RATIOS = (0.5, 0.75)
 # Glazing is a few thin lines; if more of the band than this is covered, it is a
-# filled area (e.g. a floor color) rather than a window.
-MAX_GLAZING_LINE_FRACTION = 0.7
+# filled area (e.g. a floor color) rather than a window. On thin walls the band is
+# only a few pixels, so two frame lines alone already cover most of it.
+MAX_GLAZING_LINE_FRACTION = 0.8
 # Each glazing line (or tight group of lines) is at most this fraction of the wall
-# thickness (minimum 3 px); wider bands are edges between floor colors, not glass.
+# thickness; wider bands are edges between floor colors, not glass.
 MAX_GLAZING_LINE_WIDTH_RATIO = 1 / 2
+# Minimum allowed glazing line width (px), so on thin walls a frame line that
+# touches a fixture edge (e.g. a stockroom shelf against the window) still counts.
+MIN_GLAZING_LINE_WIDTH_PX = 4
 
 OpeningKind = Literal["door", "window"]
 
@@ -69,12 +80,14 @@ def find_openings(
     (strokes in any color) also reveals colored door arcs. ``wall_pixels`` (the
     wall mask), when given, keeps wall edges from being read as arcs.
     """
-    symbols = _Symbols(lines, details, thickness, wall_pixels)
+    symbols = _Symbols(lines, details, thickness, wall_pixels, segments)
     min_gap = MIN_OPENING_RATIO * thickness
     max_gap = max(symbols.max_door_gap, MAX_WINDOW_IMAGE_RATIO * max(lines.shape))
     walls, openings = _bridge_collinear_gaps(segments, min_gap, max_gap, symbols)
     walls, end_openings = _bridge_gaps_to_walls(walls, min_gap, max_gap, symbols)
-    return walls, openings + end_openings
+    openings += end_openings
+    arc_walls, arc_doors = _place_arc_doors(walls, openings, symbols)
+    return walls + arc_walls, openings + arc_doors
 
 
 class _Symbols:
@@ -86,6 +99,7 @@ class _Symbols:
         details: np.ndarray,
         thickness: int,
         wall_pixels: np.ndarray | None,
+        walls: list[WallSegment] | None = None,
     ) -> None:
         self.lines = lines
         self.thickness = thickness
@@ -99,6 +113,12 @@ class _Symbols:
             *find_door_arcs(lines, wall_pixels, thickness, max_radius),
             *find_door_arcs(details, wall_pixels, thickness, max_radius),
         ]
+        # Which edge of each arc is the doorway, where it can be told (see _closing_axis).
+        self.axis = {arc: _closing_axis(arc, walls or [], thickness) for arc in self.arcs}
+
+    def arcs_along(self, orientation: str) -> list[DoorArc]:
+        """Arcs whose doorway may lie along a wall line of this orientation."""
+        return [arc for arc in self.arcs if self.axis[arc] in (None, orientation)]
 
     def find(self, gap: WallSegment) -> list[Opening]:
         """Openings in the gap: doors for swing arcs, windows for glazing lines.
@@ -110,7 +130,8 @@ class _Symbols:
         be windows (glass walls). An empty list means no symbol.
         """
         door_sized = gap.end - gap.start <= self.max_door_gap
-        spans = swing_spans(self.arcs, gap, self.thickness) if door_sized else []
+        arcs = self.arcs_along(gap.orientation) if door_sized else []
+        spans = swing_spans(arcs, gap, self.thickness)
         if spans:
             start = min(s for s, _ in spans)
             end = max(e for _, e in spans)
@@ -195,6 +216,111 @@ def _bridge_gaps_to_walls(
     return walls, openings
 
 
+def _place_arc_doors(
+    walls: list[WallSegment], openings: list[Opening], symbols: _Symbols
+) -> tuple[list[WallSegment], list[Opening]]:
+    """Doors for swing arcs that no wall gap lined up with, plus the walls holding them.
+
+    Such a door has no wall pieces on its own line, e.g. a door across a hallway
+    between its two side walls, or a doorway between a room corner and a wall.
+    The door is placed on the arc's line, between the two walls its swing spans.
+    """
+    thickness = symbols.thickness
+    doors = [o.span for o in openings if o.kind == "door"]
+    new_walls: list[WallSegment] = []
+    new_doors: list[Opening] = []
+    for arc in symbols.arcs:
+        if any(_arc_on(arc, door, thickness) for door in doors):
+            continue
+        for orientation in ("vertical", "horizontal"):
+            if symbols.axis[arc] not in (None, orientation):
+                continue
+            placed = _arc_door(arc, orientation, walls + new_walls, symbols)
+            if placed is not None:
+                wall, door = placed
+                new_walls.append(wall)
+                new_doors.append(door)
+                doors.append(door.span)
+                break
+    return new_walls, new_doors
+
+
+def _arc_door(
+    arc: DoorArc, orientation: str, walls: list[WallSegment], symbols: _Symbols
+) -> tuple[WallSegment, Opening] | None:
+    thickness = symbols.thickness
+    if orientation == "vertical":
+        line, hinge, direction = arc.hinge_x, arc.hinge_y, arc.sign_y
+    else:
+        line, hinge, direction = arc.hinge_y, arc.hinge_x, arc.sign_x
+    if direction == 0:
+        return None
+    swing_start, swing_end = sorted((hinge, hinge + direction * arc.radius))
+    # The walls bounding the doorway cross the door's line at either end.
+    crossing = [
+        w.offset
+        for w in walls
+        if w.orientation != orientation and w.start - thickness <= line <= w.end + thickness
+    ]
+    before = [c for c in crossing if c <= swing_start + thickness]
+    after = [c for c in crossing if c >= swing_end - thickness]
+    if not before or not after:
+        return None
+    start, end = max(before), min(after)
+    if not symbols.min_gap <= end - start <= symbols.max_door_gap:
+        return None
+    if swing_end - swing_start < MIN_SWING_IN_GAP * (end - start):
+        return None
+    # Join a wall already on this line (e.g. a room's side wall) if there is one.
+    collinear = [
+        w for w in walls if w.orientation == orientation and abs(w.offset - line) <= thickness
+    ]
+    offset = min(collinear, key=lambda w: abs(w.offset - line)).offset if collinear else line
+    wall = WallSegment(orientation, offset, start, end)
+    if any(w.start < end - thickness and start + thickness < w.end for w in collinear):
+        return None  # a wall already runs here: the gap passes handle it
+    door_start = start if swing_start - start <= thickness else swing_start
+    door_end = end if end - swing_end <= thickness else swing_end
+    return wall, Opening("door", replace(wall, start=door_start, end=door_end))
+
+
+def _closing_axis(arc: DoorArc, walls: list[WallSegment], thickness: int) -> str | None:
+    """The axis of the arc's edge that closes against a wall, i.e. the doorway.
+
+    A quarter arc has two straight edges from its hinge: the door closed (across
+    the doorway, its far end meeting the opposite jamb) and the door open (its far
+    end in the room). Only the closed edge's far end touches a wall. None when both
+    or neither do, e.g. without nearby wall pieces.
+    """
+    near = MAX_HINGE_OFFSET_RATIO * thickness
+    ends = {
+        "horizontal": (arc.hinge_x + arc.sign_x * arc.radius, arc.hinge_y),
+        "vertical": (arc.hinge_x, arc.hinge_y + arc.sign_y * arc.radius),
+    }
+    touching = [axis for axis, point in ends.items() if _near_wall(point, walls, near)]
+    return touching[0] if len(touching) == 1 else None
+
+
+def _near_wall(point: tuple[float, float], walls: list[WallSegment], distance: float) -> bool:
+    x, y = point
+    for wall in walls:
+        along, across = (x, y) if wall.orientation == "horizontal" else (y, x)
+        dx = max(wall.start - along, 0.0, along - wall.end)
+        if (dx**2 + (across - wall.offset) ** 2) ** 0.5 <= distance:
+            return True
+    return False
+
+
+def _arc_on(arc: DoorArc, door: WallSegment, thickness: int) -> bool:
+    """Whether a door already uses this arc: its hinge lies on the door's span."""
+    if door.orientation == "horizontal":
+        along, across = arc.hinge_x, arc.hinge_y
+    else:
+        along, across = arc.hinge_y, arc.hinge_x
+    near = max(MAX_HINGE_OFFSET_RATIO * thickness, MAX_HINGE_OFFSET_RADIUS_RATIO * arc.radius)
+    return abs(across - door.offset) <= near and door.start - near <= along <= door.end + near
+
+
 def _touches(value: float, offset: float, perpendicular: list[WallSegment]) -> bool:
     return any(
         abs(other.offset - value) <= TOUCH_TOLERANCE_PX and other.start <= offset <= other.end
@@ -252,5 +378,5 @@ def _has_glazing_in_band(band: np.ndarray, thickness: int) -> bool:
     # Separate lines are runs of consecutive covered rows.
     edges = np.flatnonzero(np.diff(np.concatenate(([0], covered.astype(int), [0]))))
     widths = edges[1::2] - edges[::2]
-    max_width = max(3, thickness * MAX_GLAZING_LINE_WIDTH_RATIO)
+    max_width = max(MIN_GLAZING_LINE_WIDTH_PX, thickness * MAX_GLAZING_LINE_WIDTH_RATIO)
     return len(widths) >= MIN_GLAZING_LINES and bool((widths <= max_width).all())

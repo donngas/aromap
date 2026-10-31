@@ -13,7 +13,7 @@ from app.floor_plans.models import (
     Wall,
     WindowOpening,
 )
-from app.floor_plans.recognition.indoor import estimate_footprint
+from app.floor_plans.recognition.indoor import estimate_footprint, is_interior
 from app.floor_plans.recognition.openings import Opening, find_openings
 from app.floor_plans.recognition.preprocess import (
     detail_mask,
@@ -77,6 +77,8 @@ def recognize(image_path: Path) -> RecognitionDraft:
         footprint = estimate_footprint(
             segments + [o.span for o in openings], image.shape[:2], thickness
         )
+        if footprint is not None:
+            openings = [_inner_window_as_door(o, footprint, thickness) for o in openings]
 
     wall_ids = {segment: _new_id() for segment in segments}
     doors: list[DoorOpening] = []
@@ -120,6 +122,19 @@ def recognize(image_path: Path) -> RecognitionDraft:
         indoor_domain=indoor_domain,
     )
     return RecognitionDraft(floor_plan=FloorPlan(layout=layout), warnings=warnings)
+
+
+def _inner_window_as_door(
+    opening: Opening, outline: list[tuple[float, float]], thickness: int
+) -> Opening:
+    """Windows sit on outer walls; glazing-like lines on an inner wall are a door.
+
+    Such lines are usually sliding door panels, or a door leaf drawn as a thin
+    rectangle whose swing arc was not recognized.
+    """
+    if opening.kind == "window" and is_interior(opening.span, outline, thickness):
+        return Opening("door", opening.span)
+    return opening
 
 
 def _points(segment: WallSegment, scale: float) -> tuple[PixelPoint, PixelPoint]:

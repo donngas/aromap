@@ -1,4 +1,4 @@
-from app.floor_plans.recognition.indoor import estimate_footprint
+from app.floor_plans.recognition.indoor import estimate_footprint, is_interior
 from app.floor_plans.recognition.walls import WallSegment
 
 SHAPE = (400, 400)
@@ -71,3 +71,13 @@ def test_shop_with_missing_wall_has_no_estimate() -> None:
 
 def test_no_walls_has_no_estimate() -> None:
     assert estimate_footprint([], SHAPE, thickness=10) is None
+
+
+def test_stockroom_partition_is_interior_but_storefront_is_not() -> None:
+    walls = [*_room(50, 50, 350, 300), WallSegment("vertical", 200, 50, 300)]
+    outline = estimate_footprint(walls, SHAPE, thickness=10)
+    assert outline is not None
+
+    assert is_interior(WallSegment("vertical", 200, 140, 200), outline, thickness=10)
+    assert not is_interior(WallSegment("horizontal", 300, 120, 180), outline, thickness=10)
+    assert not is_interior(WallSegment("vertical", 350, 100, 160), outline, thickness=10)
