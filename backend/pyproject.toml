@@ -1,0 +1,13 @@
+[project]
+name = "aromap-backend"
+version = "0.1.0"
+description = "Aromap backend"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115,<1",
+    "pydantic>=2,<3",
+    "uvicorn>=0.30,<1",
+]
+
+[tool.uv]
+package = false

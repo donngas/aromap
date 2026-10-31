@@ -1,0 +1,1 @@
+"""Aromap backend application."""
