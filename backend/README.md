@@ -20,9 +20,9 @@ documentation is available at `/docs`; no domain routes are registered yet.
 
 | Package | Owns | Main models |
 | --- | --- | --- |
-| `floor_plans` | Uploaded reference image, editable geometry, calibration, recognition draft | `FloorPlan`, `Layout`, `Wall`, `DoorOpening`, `ScaleCalibration`, `RecognitionDraft` |
+| `floor_plans` | Uploaded reference image, editable geometry, calibration, recognition draft | `FloorPlan`, `Layout`, `Wall`, `DoorOpening`, `WindowOpening`, `ScaleCalibration`, `RecognitionDraft` |
 | `diffusers` | User definitions, future example profiles, emission assumptions | `DiffuserDefinition`, `RelativeEmissionProfile` |
-| `projects` | Portable document, scenario editing contracts, future schema migrations | `ProjectDocument`, `Scenario`, `DiffuserPlacement`, `EnvironmentalConditions`, `SimulationSettings` |
+| `projects` | Portable document, scenario editing contracts, future schema migrations | `ProjectDocument`, `Scenario`, `OpeningState`, `DiffuserPlacement`, `EnvironmentalConditions`, `SimulationSettings` |
 | `simulations` | Resolve inputs, prepare grid, run model, describe results | `SimulationInput`, `SimulationGeometry`, `EmissionSource`, `SimulationResult` |
 | `advice` | On-demand suggestions referring to explicit project/scenario state | `AdviceRequest`, `Suggestion`, `AdviceResponse` |
 | `infrastructure` | Future temporary artifact storage and process execution | `JobStatus` |
@@ -45,11 +45,12 @@ ProjectDocument (schema_version)
   floor_plan
     reference_image (optional, embedded)
     layout (id, revision)
-      walls / doors / optional room labels
+      walls / doors / windows / optional room labels
       optional scale calibration
   diffuser_definitions[]
   scenarios[]
     placements[] -> diffuser definition IDs
+    opening_states[] -> door/window IDs
     environmental conditions
     simulation settings
   active_scenario_id -> scenario ID
@@ -68,8 +69,33 @@ if comparisons require them.
 Editable geometry uses image pixels with a top-left origin, x rightward and y
 downward. Calibration maps a nonzero pixel segment to a distance in meters.
 Draft layouts may be uncalibrated; simulation preparation must reject them.
-Doors reference a wall and describe an opening segment along it. Closed doors
-leave the wall impermeable; open doors become connections. Room labels are
+
+`PixelPoint` (`floor_plans/models.py`) is used for editable walls, openings,
+labels, calibration endpoints, and diffuser placements. `MetricPoint`
+(`simulations/models.py`) is used for resolved walls, openings, and emission
+sources. Both serialize as `{ "x": ..., "y": ... }`; their containing schemas
+establish the units. There is no automatic conversion between these types.
+
+Simulation preparation will compute a uniform scale from calibration:
+
+```text
+meters_per_pixel = distance_m / hypot(end.x - start.x, end.y - start.y)
+x_m = x_px * meters_per_pixel
+y_m = y_px * meters_per_pixel
+```
+
+Apply this scale to all geometry, source positions, and layout dimensions before
+calling the engine. Reject zero-length calibration segments. Solver cell size
+is specified in meters independently of image resolution. This conversion assumes
+a uniformly scaled, undistorted plan; perspective images need rectification first.
+Frontend zoom/pan changes only display coordinates. Resampling the underlying
+image requires transforming geometry and calibration together.
+
+Doors and windows reference a wall and describe an opening segment along it.
+Their open/closed states belong to scenarios; unspecified states resolve to closed
+during simulation preparation. Closed doors leave the wall impermeable; open doors
+become connections. Window ventilation behavior is not yet defined; recognizing a
+window does not imply support for simulating its airflow. Room labels are
 annotations, not connectivity definitions.
 
 Resolved `SimulationGeometry` uses meters with the same axis directions. Its
@@ -79,8 +105,71 @@ remain to be designed together with the solver.
 
 Models currently enforce basic types and scalar ranges only. Services must later
 validate unique IDs, references, finite numeric values, calibration, wall/door
-topology, traversable source positions, compatible sample settings, and resource
+and window topology, traversable source positions, compatible sample settings, and resource
 limits. Successful model construction does not mean a project is simulation-ready.
+
+## Recognition handoff contract
+
+The authoritative callable contract is in
+[`app/floor_plans/recognition/interface.py`](app/floor_plans/recognition/interface.py);
+the output schema and geometry conventions live in
+[`app/floor_plans/models.py`](app/floor_plans/models.py).
+The callable is currently an explicit unimplemented stub. A provider should live
+in a sibling module and be called through this entry point.
+
+```python
+from pathlib import Path
+
+from app.floor_plans.recognition.interface import recognize_floor_plan
+
+# Caller-provided absolute path; storage location is configurable.
+draft = recognize_floor_plan(Path("/tmp/aromap/uploads/example/source.png"))
+```
+
+| Side | Responsibility |
+| --- | --- |
+| Caller | Validate upload limits/format; normalize EXIF orientation; save the image; pass its absolute path; retain it throughout the call; attach reference image afterward; clean up storage |
+| Recognizer | Read image; detect walls, doors, windows; generate IDs; return `RecognitionDraft`; clean up its own intermediates |
+| Frontend / scenario | Correct geometry, calibrate scale, choose door/window states |
+| Simulation preparation | Validate final geometry and state references; resolve omitted states to closed; convert to metric solver input |
+
+The temporary path above is an example, not a required directory. The recognizer
+must not construct storage paths, look up upload IDs, modify/delete the original,
+or embed image bytes. It runs synchronously; the caller controls background/process
+execution and must keep CPU-heavy work outside the HTTP event loop.
+
+Returned drafts have input-image dimensions, layout revision `1`,
+`reference_image=None`, and `calibration=None`. Room labels may be empty. Any
+internal resize or rotation must be mapped back to the prepared input image.
+
+Geometry requirements:
+
+- Pixel coordinates use a top-left origin, x rightward and y downward.
+- Walls are nonzero, zero-thickness segments. Split every wall at crossings and
+  T-junctions: an X crossing produces four segments, a T-junction three. Connected
+  segments share identical endpoint coordinates; no junction remains inside a
+  returned wall segment.
+- Parent walls span their door/window openings. Opening endpoints lie on one
+  final wall segment and reference its ID after splitting. If recognition cannot
+  resolve an opening's parent unambiguously, omit that opening and warn rather
+  than returning a dangling reference.
+- Wall IDs are unique within walls; door/window IDs are unique across both opening
+  collections. IDs are assigned after topology normalization and retained during
+  frontend edits where the corresponding feature survives. Separate recognition
+  runs do not promise identical IDs.
+- Recognition returns geometry only, with no open/closed state, A/C or fan
+  configuration, inferred airflow, or computational grid.
+
+Incomplete recognition returns partial geometry with warnings; no detected
+geometry returns an empty layout with a warning. An unreadable image or processing
+failure raises `RecognitionError`. These are implementation requirements, not
+topology validators already supplied by the placeholder models.
+
+`OpeningState` in `app/projects/models.py` references an opening ID and explicitly
+sets `is_open`. Preparation must reject duplicate/unknown references. The old
+layout-level `DoorOpening.is_open` field has been removed: callers must put those
+values into scenario states. No legacy JSON migration is implemented in this draft
+schema. Open-window simulation policy remains follow-up work.
 
 ## Planned pipeline
 
@@ -106,7 +195,7 @@ projects remain browser-owned. The chart describes the planned flow.
 1. Upload an image and submit a recognition job. In parallel, the browser lets the
    user enter diffuser definitions or choose examples.
 2. Recognition returns `RecognitionDraft`, including warnings. The user corrects
-   walls and doors and calibrates the scale. Recognition does not create the final
+   walls, doors, and windows and calibrates the scale. Recognition does not create the final
    computational grid.
 3. The browser maintains a `ProjectDocument`. Users create/delete/move placements
    and change scenario conditions in the interactive editor.
