@@ -7,11 +7,13 @@ from app.floor_plans.models import (
     DoorOpening,
     FloorPlan,
     Layout,
+    PixelIndoorDomain,
     PixelPoint,
     RecognitionDraft,
     Wall,
     WindowOpening,
 )
+from app.floor_plans.recognition.indoor import estimate_footprint
 from app.floor_plans.recognition.openings import Opening, find_openings
 from app.floor_plans.recognition.preprocess import (
     detail_mask,
@@ -36,6 +38,8 @@ UNSUPPORTED_WARNING = (
     "This image does not look like a clean digital floor plan with thick walls; "
     "results may be unreliable. Check the walls or trace them manually."
 )
+# Same text the job runner adds for a missing estimate, so it is never shown twice.
+NO_INDOOR_WARNING = "Indoor domain estimate is unavailable; trace the indoor boundary manually."
 
 
 def recognize(image_path: Path) -> RecognitionDraft:
@@ -49,6 +53,7 @@ def recognize(image_path: Path) -> RecognitionDraft:
     segments: list[WallSegment] = []
     openings: list[Opening] = []
     warnings: list[str] = []
+    footprint = None
 
     mask, thickness = wall_mask(image)
     if thickness is not None:
@@ -69,6 +74,9 @@ def recognize(image_path: Path) -> RecognitionDraft:
         segments = kept
         openings = [o for o in openings if find_parent(o, segments) is not None]
         segments = split_at_junctions(segments)
+        footprint = estimate_footprint(
+            segments + [o.span for o in openings], image.shape[:2], thickness
+        )
 
     wall_ids = {segment: _new_id() for segment in segments}
     doors: list[DoorOpening] = []
@@ -91,6 +99,13 @@ def recognize(image_path: Path) -> RecognitionDraft:
     elif not doors and not windows:
         warnings.append("No doors or windows were detected; add them manually.")
 
+    indoor_domain = None
+    if footprint is not None:
+        boundary = [PixelPoint(x=x / scale, y=y / scale) for x, y in footprint]
+        indoor_domain = PixelIndoorDomain(boundary=boundary)
+    else:
+        warnings.append(NO_INDOOR_WARNING)
+
     walls = []
     for segment, wall_id in wall_ids.items():
         start, end = _points(segment, scale)
@@ -102,6 +117,7 @@ def recognize(image_path: Path) -> RecognitionDraft:
         walls=walls,
         doors=doors,
         windows=windows,
+        indoor_domain=indoor_domain,
     )
     return RecognitionDraft(floor_plan=FloorPlan(layout=layout), warnings=warnings)
 

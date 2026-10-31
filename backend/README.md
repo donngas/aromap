@@ -446,6 +446,11 @@ furniture outlines, and full circles such as round tables are not read as doors.
   `None` with a warning when unavailable. Map its vertices back after any internal
   resizing/rotation, just as for wall endpoints. Estimation is left to the
   recognition implementation; consumers may review/correct or trace the domain.
+  The OpenCV recognizer ([`indoor.py`](app/floor_plans/recognition/indoor.py))
+  closes doors and windows, fills the outdoors in from the image edge, and traces
+  everything left (all rooms and the walls between them) as **one** `boundary`
+  along the outer face of the outer walls, with no `holes`. When the outer walls
+  are not closed, it returns `None` with a warning.
 - Internal resizing/rotation must map back to input image coordinates: top-left
   origin, x rightward, y downward.
 - Walls are nonzero, zero-thickness segments split at every crossing and T-junction.
