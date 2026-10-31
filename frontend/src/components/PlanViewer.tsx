@@ -1,7 +1,30 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { distance, wallAt } from '../floorPlan/geometry.ts'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { distance, distanceToSegment, wallAt } from '../floorPlan/geometry.ts'
 import type { Layout, Opening, PixelPoint, Wall } from '../floorPlan/layout.ts'
 import { LAYOUT_STYLE } from '../floorPlan/layoutStyle.ts'
+
+/** A placed diffuser, drawn as a numbered dot. */
+export interface PlanMarker {
+  id: string
+  position: PixelPoint
+  label: string
+}
+
+/** Major lines every `spacing` image pixels (e.g. 1 m), with quarter lines when zoomed in. */
+export interface PlanGrid {
+  spacing: number
+  originX: number
+  originY: number
+}
+
+/** An image laid over the plan without smoothing, in image pixels (e.g. a simulated field). */
+export interface PlanOverlay {
+  source: CanvasImageSource
+  x: number
+  y: number
+  width: number
+  height: number
+}
 
 interface PlanViewerProps {
   image: HTMLImageElement | null
@@ -9,6 +32,10 @@ interface PlanViewerProps {
   layout?: Layout | null
   /** 0 hides the image; geometry stays visible. */
   imageOpacity?: number
+  /** White sheet under the image; off leaves only the geometry over the background. */
+  paper?: boolean
+  /** Background grid in image pixels: line spacing and a point lines pass through. */
+  grid?: PlanGrid | null
   /** Display-only wall thickness in image pixels; scales with zoom like a real wall. */
   wallThickness?: number
   /** Highlighted wall, e.g. the calibration reference. */
@@ -20,6 +47,21 @@ interface PlanViewerProps {
   /** Makes the outline editable: drag vertices, drag edge midpoints to add one, double-click to remove. */
   onPolygonChange?: (points: PixelPoint[]) => void
   onFileDrop?: (file: File) => void
+  overlay?: PlanOverlay | null
+  markers?: PlanMarker[]
+  selectedMarkerId?: string | null
+  /** Clicking a marker selects it; clicking empty plan reports null. */
+  onMarkerSelect?: (id: string | null) => void
+  /** Makes markers draggable. */
+  onMarkerMove?: (id: string, position: PixelPoint) => void
+  /** Placing mode: a click on the plan reports its position instead of selecting. */
+  onPlanClick?: (position: PixelPoint) => void
+  /** Doors drawn as open. */
+  openDoorIds?: ReadonlySet<string>
+  /** Enables opening and closing doors by clicking them. */
+  onDoorToggle?: (doorId: string) => void
+  /** Extra controls placed before "화면에 맞추기". */
+  toolbar?: ReactNode
 }
 
 interface View {
@@ -31,6 +73,9 @@ interface View {
 type Drag =
   | { kind: 'pan'; x: number; y: number; tx: number; ty: number; moved: boolean }
   | { kind: 'vertex'; index: number }
+  | { kind: 'marker'; id: string; x: number; y: number; moved: boolean }
+
+const NO_DOORS: ReadonlySet<string> = new Set()
 
 /** Screen-pixel radius within which a handle or wall responds to the pointer. */
 const HANDLE_HIT_PX = 10
@@ -41,12 +86,23 @@ export function PlanViewer({
   image,
   layout = null,
   imageOpacity = 1,
+  paper = true,
+  grid = null,
   wallThickness = 4,
   selectedWallId = null,
   onWallSelect,
   polygon = null,
   onPolygonChange,
   onFileDrop,
+  overlay = null,
+  markers,
+  selectedMarkerId = null,
+  onMarkerSelect,
+  onMarkerMove,
+  onPlanClick,
+  openDoorIds = NO_DOORS,
+  onDoorToggle,
+  toolbar,
 }: PlanViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -58,6 +114,7 @@ export function PlanViewer({
   const [redraw, setRedraw] = useState(0)
   const [dragOver, setDragOver] = useState(false)
   const [hoverWallId, setHoverWallId] = useState<string | null>(null)
+  const [hoverDoorId, setHoverDoorId] = useState<string | null>(null)
   const [cursor, setCursor] = useState('grab')
   const editable = Boolean(polygon && onPolygonChange)
 
@@ -108,17 +165,26 @@ export function PlanViewer({
 
     const { scale, tx, ty } = viewRef.current
     ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * tx, dpr * ty)
-    // Paper background, so transparent plans stay readable.
-    ctx.fillStyle = '#ffffff'
-    ctx.fillRect(0, 0, image.naturalWidth, image.naturalHeight)
-    if (imageOpacity > 0) {
-      ctx.globalAlpha = imageOpacity
-      ctx.drawImage(image, 0, 0)
-      ctx.globalAlpha = 1
+    if (grid) drawGrid(ctx, grid, scale, { x: -tx / scale, y: -ty / scale, width: size.width / scale, height: size.height / scale })
+    if (paper) {
+      // Paper background, so transparent plans stay readable.
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, image.naturalWidth, image.naturalHeight)
+      if (imageOpacity > 0) {
+        ctx.globalAlpha = imageOpacity
+        ctx.drawImage(image, 0, 0)
+        ctx.globalAlpha = 1
+      }
     }
     if (polygon) fillPolygon(ctx, polygon)
+    if (overlay) {
+      // Flat colour per cell; smoothing would blend values across walls.
+      ctx.imageSmoothingEnabled = false
+      ctx.drawImage(overlay.source, overlay.x, overlay.y, overlay.width, overlay.height)
+      ctx.imageSmoothingEnabled = true
+    }
     if (layout) {
-      drawLayout(ctx, layout, scale, wallThickness)
+      drawLayout(ctx, layout, scale, wallThickness, openDoorIds, hoverDoorId)
       const highlighted = [selectedWallId, hoverWallId !== selectedWallId ? hoverWallId : null]
       for (const id of highlighted) {
         const wall = id ? layout.walls.find((w) => w.id === id) : undefined
@@ -126,7 +192,26 @@ export function PlanViewer({
       }
     }
     if (polygon) strokePolygon(ctx, polygon, scale, editable)
-  }, [image, layout, imageOpacity, wallThickness, selectedWallId, hoverWallId, polygon, editable, size, redraw])
+    if (markers) drawMarkers(ctx, markers, selectedMarkerId, scale)
+  }, [
+    image,
+    layout,
+    imageOpacity,
+    paper,
+    grid,
+    wallThickness,
+    selectedWallId,
+    hoverWallId,
+    polygon,
+    editable,
+    overlay,
+    markers,
+    selectedMarkerId,
+    openDoorIds,
+    hoverDoorId,
+    size,
+    redraw,
+  ])
 
   // React registers wheel listeners as passive, so zoom needs a manual listener.
   useEffect(() => {
@@ -184,13 +269,41 @@ export function PlanViewer({
     return wallAt(layout, p, tolerance)
   }
 
+  /** The topmost marker under `p`, if markers respond to the pointer. */
+  const markerUnder = (p: PixelPoint): PlanMarker | null => {
+    if (!markers || !(onMarkerSelect || onMarkerMove)) return null
+    const tolerance = (LAYOUT_STYLE.marker.radius + 3) / viewRef.current.scale
+    for (let i = markers.length - 1; i >= 0; i--) {
+      if (distance(markers[i].position, p) <= tolerance) return markers[i]
+    }
+    return null
+  }
+
+  const doorUnder = (p: PixelPoint): Opening | null => {
+    if (!layout || !onDoorToggle) return null
+    const tolerance = Math.max(wallThickness / 2, HANDLE_HIT_PX / viewRef.current.scale)
+    let best: Opening | null = null
+    let bestDistance = tolerance
+    for (const door of layout.doors) {
+      const d = distanceToSegment(p, door.start, door.end)
+      if (d <= bestDistance) {
+        best = door
+        bestDistance = d
+      }
+    }
+    return best
+  }
+
   const updateHover = (p: PixelPoint) => {
-    const handle = vertexAt(p) >= 0 || midpointAt(p) >= 0
-    const wall = handle ? null : wallUnder(p)
-    const nextCursor = handle ? 'move' : wall ? 'pointer' : 'grab'
+    const handle = vertexAt(p) >= 0 || midpointAt(p) >= 0 || markerUnder(p) !== null
+    const door = handle || onPlanClick ? null : doorUnder(p)
+    const wall = handle || door ? null : wallUnder(p)
+    const nextCursor = handle ? 'move' : door || wall ? 'pointer' : 'grab'
     if (nextCursor !== cursor) setCursor(nextCursor)
     const nextWall = wall?.id ?? null
     if (nextWall !== hoverWallId) setHoverWallId(nextWall)
+    const nextDoor = door?.id ?? null
+    if (nextDoor !== hoverDoorId) setHoverDoorId(nextDoor)
   }
 
   return (
@@ -214,10 +327,16 @@ export function PlanViewer({
       <canvas
         ref={canvasRef}
         className="viewer__canvas"
-        style={{ cursor }}
+        style={{ cursor: cursor === 'grab' && onPlanClick ? 'crosshair' : cursor }}
         onPointerDown={(event) => {
           event.currentTarget.setPointerCapture(event.pointerId)
           const p = toImage(event.clientX, event.clientY)
+          const marker = markerUnder(p)
+          if (marker) {
+            onMarkerSelect?.(marker.id)
+            dragRef.current = { kind: 'marker', id: marker.id, x: event.clientX, y: event.clientY, moved: false }
+            return
+          }
           const vertex = vertexAt(p)
           if (vertex >= 0) {
             dragRef.current = { kind: 'vertex', index: vertex }
@@ -252,6 +371,14 @@ export function PlanViewer({
             onPolygonChange(next)
             return
           }
+          if (drag.kind === 'marker') {
+            if (!onMarkerMove) return
+            if (drag.moved || Math.hypot(event.clientX - drag.x, event.clientY - drag.y) > CLICK_TOLERANCE_PX) {
+              drag.moved = true
+              onMarkerMove(drag.id, clampToImage(p))
+            }
+            return
+          }
           const dx = event.clientX - drag.x
           const dy = event.clientY - drag.y
           if (drag.moved || Math.hypot(dx, dy) > CLICK_TOLERANCE_PX) {
@@ -264,8 +391,19 @@ export function PlanViewer({
           const drag = dragRef.current
           dragRef.current = null
           if (drag?.kind === 'pan' && !drag.moved) {
-            const wall = wallUnder(toImage(event.clientX, event.clientY))
+            const p = toImage(event.clientX, event.clientY)
+            if (onPlanClick) {
+              onPlanClick(clampToImage(p))
+              return
+            }
+            const door = doorUnder(p)
+            if (door) {
+              onDoorToggle?.(door.id)
+              return
+            }
+            const wall = wallUnder(p)
             if (wall) onWallSelect?.(wall.id)
+            else onMarkerSelect?.(null)
           }
         }}
         onDoubleClick={(event) => {
@@ -279,6 +417,7 @@ export function PlanViewer({
         }}
         onPointerLeave={() => {
           if (hoverWallId) setHoverWallId(null)
+          if (hoverDoorId) setHoverDoorId(null)
         }}
       />
       {!image && onFileDrop && (
@@ -287,8 +426,14 @@ export function PlanViewer({
           <p>왼쪽에서 파일을 선택하세요.</p>
         </div>
       )}
+      {hoverDoorId && (
+        <p className="viewer__hint" role="status">
+          {openDoorIds.has(hoverDoorId) ? '열린 문 · 클릭하면 닫혀요' : '닫힌 문 · 클릭하면 열려요'}
+        </p>
+      )}
       {image && (
         <div className="viewer__toolbar">
+          {toolbar}
           <button type="button" onClick={fitToView}>
             화면에 맞추기
           </button>
@@ -333,7 +478,14 @@ function solidParts(cuts: Interval[]): Interval[] {
  * window sits, with square joints at their endpoints so corners and
  * T-junctions close cleanly. Openings fill their gap within the band.
  */
-function drawLayout(ctx: CanvasRenderingContext2D, layout: Layout, scale: number, thickness: number) {
+function drawLayout(
+  ctx: CanvasRenderingContext2D,
+  layout: Layout,
+  scale: number,
+  thickness: number,
+  openDoorIds: ReadonlySet<string>,
+  hoverDoorId: string | null,
+) {
   const wallsById = new Map(layout.walls.map((w) => [w.id, w]))
   const cutsByWall = new Map<string, Interval[]>()
   for (const o of [...layout.doors, ...layout.windows]) {
@@ -374,7 +526,8 @@ function drawLayout(ctx: CanvasRenderingContext2D, layout: Layout, scale: number
   ctx.stroke()
   ctx.fill(joints)
 
-  const openings = (items: Opening[], style: { color: string; band: string; line: number }) => {
+  const openings = (items: Opening[], style: { color: string; band: string; line: number; dash?: number }) => {
+    if (items.length === 0) return
     ctx.beginPath()
     for (const o of items) {
       ctx.moveTo(o.start.x, o.start.y)
@@ -385,10 +538,85 @@ function drawLayout(ctx: CanvasRenderingContext2D, layout: Layout, scale: number
     ctx.stroke()
     ctx.strokeStyle = style.color
     ctx.lineWidth = style.line / scale
+    if (style.dash) ctx.setLineDash([style.dash / scale, style.dash / scale])
+    ctx.stroke()
+    ctx.setLineDash([])
+  }
+  openings(
+    layout.doors.filter((d) => !openDoorIds.has(d.id)),
+    LAYOUT_STYLE.door,
+  )
+  openings(
+    layout.doors.filter((d) => openDoorIds.has(d.id)),
+    LAYOUT_STYLE.openDoor,
+  )
+  openings(layout.windows, LAYOUT_STYLE.window)
+
+  const hovered = hoverDoorId ? layout.doors.find((d) => d.id === hoverDoorId) : undefined
+  if (hovered) {
+    ctx.beginPath()
+    ctx.moveTo(hovered.start.x, hovered.start.y)
+    ctx.lineTo(hovered.end.x, hovered.end.y)
+    ctx.strokeStyle = LAYOUT_STYLE.selection.hover
+    ctx.lineWidth = thickness + LAYOUT_STYLE.selection.outset / scale
     ctx.stroke()
   }
-  openings(layout.doors, LAYOUT_STYLE.door)
-  openings(layout.windows, LAYOUT_STYLE.window)
+}
+
+/** Thin lines over the visible area; quarter lines appear once they are far enough apart. */
+function drawGrid(
+  ctx: CanvasRenderingContext2D,
+  grid: PlanGrid,
+  scale: number,
+  visible: { x: number; y: number; width: number; height: number },
+) {
+  const levels = [
+    { step: grid.spacing / 4, color: 'rgba(78, 83, 76, 0.07)', minScreen: 10 },
+    { step: grid.spacing, color: 'rgba(78, 83, 76, 0.16)', minScreen: 6 },
+  ]
+  ctx.lineWidth = 1 / scale
+  for (const { step, color, minScreen } of levels) {
+    if (!(step > 0) || step * scale < minScreen) continue
+    ctx.beginPath()
+    const x0 = grid.originX + Math.floor((visible.x - grid.originX) / step) * step
+    for (let x = x0; x <= visible.x + visible.width; x += step) {
+      ctx.moveTo(x, visible.y)
+      ctx.lineTo(x, visible.y + visible.height)
+    }
+    const y0 = grid.originY + Math.floor((visible.y - grid.originY) / step) * step
+    for (let y = y0; y <= visible.y + visible.height; y += step) {
+      ctx.moveTo(visible.x, y)
+      ctx.lineTo(visible.x + visible.width, y)
+    }
+    ctx.strokeStyle = color
+    ctx.stroke()
+  }
+}
+
+function drawMarkers(ctx: CanvasRenderingContext2D, markers: PlanMarker[], selectedId: string | null, scale: number) {
+  const style = LAYOUT_STYLE.marker
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.font = `600 ${style.font / scale}px system-ui, sans-serif`
+  for (const m of markers) {
+    const { x, y } = m.position
+    if (m.id === selectedId) {
+      ctx.beginPath()
+      ctx.arc(x, y, style.ringRadius / scale, 0, Math.PI * 2)
+      ctx.strokeStyle = style.ring
+      ctx.lineWidth = 3 / scale
+      ctx.stroke()
+    }
+    ctx.beginPath()
+    ctx.arc(x, y, style.radius / scale, 0, Math.PI * 2)
+    ctx.fillStyle = style.fill
+    ctx.fill()
+    ctx.strokeStyle = style.text
+    ctx.lineWidth = 1.5 / scale
+    ctx.stroke()
+    ctx.fillStyle = style.text
+    ctx.fillText(m.label, x, y + 0.5 / scale)
+  }
 }
 
 function drawWallHighlight(ctx: CanvasRenderingContext2D, wall: Wall, scale: number, thickness: number, selected: boolean) {

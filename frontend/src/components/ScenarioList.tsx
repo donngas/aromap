@@ -8,8 +8,8 @@ interface ScenarioListProps {
 
 /**
  * Scenarios compare diffuser arrangements on the same floor plan. Each keeps
- * its own placements and door/window states; walls and diffuser products are
- * shared by all of them.
+ * its own placements and door states; walls and diffuser products are shared
+ * by all of them.
  */
 export function ScenarioList({ project, onChange }: ScenarioListProps) {
   const { scenarios, activeScenarioId } = project
@@ -55,26 +55,10 @@ export function ScenarioList({ project, onChange }: ScenarioListProps) {
     setConfirmDelete(false)
   }
 
-  return (
-    <section className="scenarios" aria-labelledby="scenarios-title">
-      <h3 id="scenarios-title">배치안</h3>
-      <ul className="scenarios__list">
-        {scenarios.map((s) => (
-          <li key={s.id}>
-            <button
-              type="button"
-              className={s.id === active.id ? 'is-selected' : ''}
-              aria-pressed={s.id === active.id}
-              onClick={() => select(s.id)}
-            >
-              {s.name}
-            </button>
-          </li>
-        ))}
-      </ul>
-
-      {renaming !== null ? (
-        <div className="row">
+  if (renaming !== null) {
+    return (
+      <div className="scenarios">
+        <div className="row scenarios__edit">
           <input
             aria-label="배치안 이름"
             value={renaming}
@@ -89,7 +73,21 @@ export function ScenarioList({ project, onChange }: ScenarioListProps) {
             저장
           </button>
         </div>
-      ) : confirmDelete ? (
+      </div>
+    )
+  }
+
+  return (
+    <div className="scenarios">
+      <select aria-label="배치안 고르기" value={active.id} onChange={(event) => select(event.target.value)}>
+        {scenarios.map((s) => (
+          <option key={s.id} value={s.id}>
+            {s.name} · 디퓨저 {s.placements.length}개
+          </option>
+        ))}
+      </select>
+
+      {confirmDelete ? (
         <div className="row">
           <span className="note">"{active.name}"을 삭제할까요?</span>
           <button type="button" className="button--danger" onClick={remove}>
@@ -100,7 +98,7 @@ export function ScenarioList({ project, onChange }: ScenarioListProps) {
           </button>
         </div>
       ) : (
-        <div className="row scenarios__actions">
+        <div className="scenarios__actions">
           <button type="button" onClick={() => add(false)}>
             + 새 배치안
           </button>
@@ -108,14 +106,13 @@ export function ScenarioList({ project, onChange }: ScenarioListProps) {
             복제
           </button>
           <button type="button" onClick={() => setRenaming(active.name)}>
-            이름 바꾸기
+            이름
           </button>
           <button type="button" disabled={scenarios.length <= 1} onClick={() => setConfirmDelete(true)}>
             삭제
           </button>
         </div>
       )}
-      <p className="field__hint">배치안마다 디퓨저 배치와 문 열림 상태를 따로 저장해요.</p>
-    </section>
+    </div>
   )
 }
