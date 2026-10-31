@@ -19,6 +19,7 @@ class ExteriorEdge:
     length_m: float
     normal_x: float
     normal_y: float
+    kind: str = "window"
 
 
 def map_exterior_openings(geometry, grid):
@@ -27,7 +28,7 @@ def map_exterior_openings(geometry, grid):
     polygon = polygon_for(geometry.indoor_domain)
     boundary = polygon.boundary
     h = grid.cell_size_m
-    tolerance = max(.15, 1.5 * h)
+    tolerance = .375  # Physical recognition tolerance; independent of solver resolution.
     rc = np.argwhere(grid.active_mask)
     xy = np.column_stack((grid.origin_m.x + (rc[:, 1] + .5) * h,
                           grid.origin_m.y + (rc[:, 0] + .5) * h))
@@ -146,5 +147,5 @@ def map_exterior_openings(geometry, grid):
                 raise PreparationError('unresolved_exterior_opening', f'Opening {opening.id} cannot be mapped to an indoor cell; refine the grid.')
             assigned[found] = assigned.get(found, 0) + length / count
         exterior_ids.add(opening.id)
-        result.extend(ExteriorEdge(opening.id, cell, width, float(normal[0]), float(normal[1])) for cell, width in assigned.items())
+        result.extend(ExteriorEdge(opening.id, cell, width, float(normal[0]), float(normal[1]), opening.kind) for cell, width in assigned.items())
     return tuple(result), exterior_ids

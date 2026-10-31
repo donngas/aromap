@@ -1,0 +1,956 @@
+{
+  "versions": {
+    "solver": "square-balance-airflow-v5",
+    "preparation": "square-center-grid-v4"
+  },
+  "opening_sweep": [
+    {
+      "kind": "window",
+      "outdoor": "calm",
+      "multiplier": 0.5,
+      "exchange_m_per_s": 0.002,
+      "decay_ach": 0.7990243793718044
+    },
+    {
+      "kind": "window",
+      "outdoor": "calm",
+      "multiplier": 1.0,
+      "exchange_m_per_s": 0.004,
+      "decay_ach": 1.0106564705249477
+    },
+    {
+      "kind": "window",
+      "outdoor": "calm",
+      "multiplier": 2.0,
+      "exchange_m_per_s": 0.008,
+      "decay_ach": 1.2891855856726764
+    },
+    {
+      "kind": "window",
+      "outdoor": "moderate",
+      "multiplier": 0.5,
+      "exchange_m_per_s": 0.006,
+      "decay_ach": 1.1678791655599157
+    },
+    {
+      "kind": "window",
+      "outdoor": "moderate",
+      "multiplier": 1.0,
+      "exchange_m_per_s": 0.012,
+      "decay_ach": 1.4642078859461325
+    },
+    {
+      "kind": "window",
+      "outdoor": "moderate",
+      "multiplier": 2.0,
+      "exchange_m_per_s": 0.024,
+      "decay_ach": 1.7407229978655918
+    },
+    {
+      "kind": "window",
+      "outdoor": "breezy",
+      "multiplier": 0.5,
+      "exchange_m_per_s": 0.0125,
+      "decay_ach": 1.4816340648465942
+    },
+    {
+      "kind": "window",
+      "outdoor": "breezy",
+      "multiplier": 1.0,
+      "exchange_m_per_s": 0.025,
+      "decay_ach": 1.7552852806385373
+    },
+    {
+      "kind": "window",
+      "outdoor": "breezy",
+      "multiplier": 2.0,
+      "exchange_m_per_s": 0.05,
+      "decay_ach": 1.9661638304597218
+    },
+    {
+      "kind": "door",
+      "outdoor": "calm",
+      "multiplier": 0.5,
+      "exchange_m_per_s": 0.003,
+      "decay_ach": 0.913239677798144
+    },
+    {
+      "kind": "door",
+      "outdoor": "calm",
+      "multiplier": 1.0,
+      "exchange_m_per_s": 0.006,
+      "decay_ach": 1.167879165559146
+    },
+    {
+      "kind": "door",
+      "outdoor": "calm",
+      "multiplier": 2.0,
+      "exchange_m_per_s": 0.012,
+      "decay_ach": 1.4642078859449423
+    },
+    {
+      "kind": "door",
+      "outdoor": "moderate",
+      "multiplier": 0.5,
+      "exchange_m_per_s": 0.009,
+      "decay_ach": 1.340011015170405
+    },
+    {
+      "kind": "door",
+      "outdoor": "moderate",
+      "multiplier": 1.0,
+      "exchange_m_per_s": 0.018,
+      "decay_ach": 1.6319732583639757
+    },
+    {
+      "kind": "door",
+      "outdoor": "moderate",
+      "multiplier": 2.0,
+      "exchange_m_per_s": 0.036,
+      "decay_ach": 1.8748736599093334
+    },
+    {
+      "kind": "door",
+      "outdoor": "breezy",
+      "multiplier": 0.5,
+      "exchange_m_per_s": 0.0175,
+      "decay_ach": 1.6207943248221897
+    },
+    {
+      "kind": "door",
+      "outdoor": "breezy",
+      "multiplier": 1.0,
+      "exchange_m_per_s": 0.035,
+      "decay_ach": 1.866320974848115
+    },
+    {
+      "kind": "door",
+      "outdoor": "breezy",
+      "multiplier": 2.0,
+      "exchange_m_per_s": 0.07,
+      "decay_ach": 2.0442665227929306
+    }
+  ],
+  "device_sweep": [
+    {
+      "kind": "fan",
+      "strength": "low",
+      "multiplier": 0.5,
+      "push_m_per_s": 0.04,
+      "max_velocity_m_per_s": 0.01596484999398478,
+      "cv_300s": 0.37562022819474317,
+      "cv_900s": 0.06470247035060832,
+      "mixing_time_s": 450
+    },
+    {
+      "kind": "fan",
+      "strength": "low",
+      "multiplier": 1.0,
+      "push_m_per_s": 0.08,
+      "max_velocity_m_per_s": 0.03192969998796956,
+      "cv_300s": 0.3986077521749586,
+      "cv_900s": 0.021229836252597993,
+      "mixing_time_s": 460
+    },
+    {
+      "kind": "fan",
+      "strength": "low",
+      "multiplier": 2.0,
+      "push_m_per_s": 0.16,
+      "max_velocity_m_per_s": 0.06385939997593912,
+      "cv_300s": 0.1856515472521804,
+      "cv_900s": 0.00781861155257066,
+      "mixing_time_s": 300
+    },
+    {
+      "kind": "fan",
+      "strength": "medium",
+      "multiplier": 0.5,
+      "push_m_per_s": 0.08,
+      "max_velocity_m_per_s": 0.03192969998796956,
+      "cv_300s": 0.3986077521749586,
+      "cv_900s": 0.021229836252597993,
+      "mixing_time_s": 460
+    },
+    {
+      "kind": "fan",
+      "strength": "medium",
+      "multiplier": 1.0,
+      "push_m_per_s": 0.16,
+      "max_velocity_m_per_s": 0.06385939997593912,
+      "cv_300s": 0.1856515472521804,
+      "cv_900s": 0.00781861155257066,
+      "mixing_time_s": 300
+    },
+    {
+      "kind": "fan",
+      "strength": "medium",
+      "multiplier": 2.0,
+      "push_m_per_s": 0.32,
+      "max_velocity_m_per_s": 0.12771879995187824,
+      "cv_300s": 0.08129077587003486,
+      "cv_900s": 0.00424088406840497,
+      "mixing_time_s": 190
+    },
+    {
+      "kind": "fan",
+      "strength": "high",
+      "multiplier": 0.5,
+      "push_m_per_s": 0.14,
+      "max_velocity_m_per_s": 0.0558769749789467,
+      "cv_300s": 0.24138473395425195,
+      "cv_900s": 0.009008033967275111,
+      "mixing_time_s": 330
+    },
+    {
+      "kind": "fan",
+      "strength": "high",
+      "multiplier": 1.0,
+      "push_m_per_s": 0.28,
+      "max_velocity_m_per_s": 0.1117539499578934,
+      "cv_300s": 0.09136504886334391,
+      "cv_900s": 0.004815747118130356,
+      "mixing_time_s": 200
+    },
+    {
+      "kind": "fan",
+      "strength": "high",
+      "multiplier": 2.0,
+      "push_m_per_s": 0.56,
+      "max_velocity_m_per_s": 0.2235078999157868,
+      "cv_300s": 0.06894867968772968,
+      "cv_900s": 0.002307212387361451,
+      "mixing_time_s": 150
+    },
+    {
+      "kind": "ac",
+      "strength": "low",
+      "multiplier": 0.5,
+      "push_m_per_s": 0.05,
+      "max_velocity_m_per_s": 0.017140001413552992,
+      "cv_300s": 0.40134242657982083,
+      "cv_900s": 0.052892794161819544,
+      "mixing_time_s": 580
+    },
+    {
+      "kind": "ac",
+      "strength": "low",
+      "multiplier": 1.0,
+      "push_m_per_s": 0.1,
+      "max_velocity_m_per_s": 0.034280002827105985,
+      "cv_300s": 0.46655301732576926,
+      "cv_900s": 0.02339280677402586,
+      "mixing_time_s": 450
+    },
+    {
+      "kind": "ac",
+      "strength": "low",
+      "multiplier": 2.0,
+      "push_m_per_s": 0.2,
+      "max_velocity_m_per_s": 0.06856000565421197,
+      "cv_300s": 0.25125709081288433,
+      "cv_900s": 0.009809667110825343,
+      "mixing_time_s": 350
+    },
+    {
+      "kind": "ac",
+      "strength": "medium",
+      "multiplier": 0.5,
+      "push_m_per_s": 0.1,
+      "max_velocity_m_per_s": 0.034280002827105985,
+      "cv_300s": 0.46655301732576926,
+      "cv_900s": 0.02339280677402586,
+      "mixing_time_s": 450
+    },
+    {
+      "kind": "ac",
+      "strength": "medium",
+      "multiplier": 1.0,
+      "push_m_per_s": 0.2,
+      "max_velocity_m_per_s": 0.06856000565421197,
+      "cv_300s": 0.25125709081288433,
+      "cv_900s": 0.009809667110825343,
+      "mixing_time_s": 350
+    },
+    {
+      "kind": "ac",
+      "strength": "medium",
+      "multiplier": 2.0,
+      "push_m_per_s": 0.4,
+      "max_velocity_m_per_s": 0.13712001130842394,
+      "cv_300s": 0.10105499799597578,
+      "cv_900s": 0.005415516658116173,
+      "mixing_time_s": 220
+    },
+    {
+      "kind": "ac",
+      "strength": "high",
+      "multiplier": 0.5,
+      "push_m_per_s": 0.175,
+      "max_velocity_m_per_s": 0.05999000494743549,
+      "cv_300s": 0.26749670978326273,
+      "cv_900s": 0.0112361881901512,
+      "mixing_time_s": 370
+    },
+    {
+      "kind": "ac",
+      "strength": "high",
+      "multiplier": 1.0,
+      "push_m_per_s": 0.35,
+      "max_velocity_m_per_s": 0.11998000989487098,
+      "cv_300s": 0.12328454025075408,
+      "cv_900s": 0.0060512385926174625,
+      "mixing_time_s": 240
+    },
+    {
+      "kind": "ac",
+      "strength": "high",
+      "multiplier": 2.0,
+      "push_m_per_s": 0.7,
+      "max_velocity_m_per_s": 0.23996001978974196,
+      "cv_300s": 0.07054848673230453,
+      "cv_900s": 0.003102742708692228,
+      "mixing_time_s": 160
+    }
+  ],
+  "wind_sweep": [
+    {
+      "kind": "window",
+      "outdoor": "moderate",
+      "multiplier": 0.5,
+      "decay_ach": 4.181974248130907
+    },
+    {
+      "kind": "window",
+      "outdoor": "moderate",
+      "multiplier": 1.0,
+      "decay_ach": 6.994149380973337
+    },
+    {
+      "kind": "window",
+      "outdoor": "moderate",
+      "multiplier": 2.0,
+      "decay_ach": 15.219416428255375
+    },
+    {
+      "kind": "window",
+      "outdoor": "breezy",
+      "multiplier": 0.5,
+      "decay_ach": 9.140196226166134
+    },
+    {
+      "kind": "window",
+      "outdoor": "breezy",
+      "multiplier": 1.0,
+      "decay_ach": 20.332785562848258
+    },
+    {
+      "kind": "window",
+      "outdoor": "breezy",
+      "multiplier": 2.0,
+      "decay_ach": 48.85150645880278
+    },
+    {
+      "kind": "door",
+      "outdoor": "moderate",
+      "multiplier": 0.5,
+      "decay_ach": 5.9222828506705865
+    },
+    {
+      "kind": "door",
+      "outdoor": "moderate",
+      "multiplier": 1.0,
+      "decay_ach": 11.518024646742285
+    },
+    {
+      "kind": "door",
+      "outdoor": "moderate",
+      "multiplier": 2.0,
+      "decay_ach": 27.134693792050044
+    },
+    {
+      "kind": "door",
+      "outdoor": "breezy",
+      "multiplier": 0.5,
+      "decay_ach": 15.240522722337886
+    },
+    {
+      "kind": "door",
+      "outdoor": "breezy",
+      "multiplier": 1.0,
+      "decay_ach": 36.16179108541497
+    },
+    {
+      "kind": "door",
+      "outdoor": "breezy",
+      "multiplier": 2.0,
+      "decay_ach": 84.37235235426232
+    }
+  ],
+  "device_geometry_checks": [
+    {
+      "kind": "fan",
+      "width": 6,
+      "depth": 6,
+      "x": 3,
+      "y": 3,
+      "angle": 90,
+      "radius_multiplier": 0.75,
+      "cv_900s": 0.007714967674249183,
+      "mass_ratio": 1.0000000000000175
+    },
+    {
+      "kind": "fan",
+      "width": 6,
+      "depth": 6,
+      "x": 3,
+      "y": 3,
+      "angle": 90,
+      "radius_multiplier": 1.0,
+      "cv_900s": 0.007818611552570633,
+      "mass_ratio": 1.0000000000000153
+    },
+    {
+      "kind": "fan",
+      "width": 6,
+      "depth": 6,
+      "x": 3,
+      "y": 3,
+      "angle": 90,
+      "radius_multiplier": 1.5,
+      "cv_900s": 0.013326651279723538,
+      "mass_ratio": 1.0000000000000058
+    },
+    {
+      "kind": "fan",
+      "width": 8,
+      "depth": 4,
+      "x": 2,
+      "y": 2,
+      "angle": 0,
+      "radius_multiplier": 0.75,
+      "cv_900s": 0.1767396277411528,
+      "mass_ratio": 0.9999999999999976
+    },
+    {
+      "kind": "fan",
+      "width": 8,
+      "depth": 4,
+      "x": 2,
+      "y": 2,
+      "angle": 0,
+      "radius_multiplier": 1.0,
+      "cv_900s": 0.17825547235958972,
+      "mass_ratio": 0.999999999999978
+    },
+    {
+      "kind": "fan",
+      "width": 8,
+      "depth": 4,
+      "x": 2,
+      "y": 2,
+      "angle": 0,
+      "radius_multiplier": 1.5,
+      "cv_900s": 0.13844529553308457,
+      "mass_ratio": 1.0000000000000062
+    },
+    {
+      "kind": "fan",
+      "width": 8,
+      "depth": 4,
+      "x": 1,
+      "y": 1,
+      "angle": 45,
+      "radius_multiplier": 0.75,
+      "cv_900s": 0.19588611563500793,
+      "mass_ratio": 1.0000000000000089
+    },
+    {
+      "kind": "fan",
+      "width": 8,
+      "depth": 4,
+      "x": 1,
+      "y": 1,
+      "angle": 45,
+      "radius_multiplier": 1.0,
+      "cv_900s": 0.26305958143060537,
+      "mass_ratio": 0.9999999999999797
+    },
+    {
+      "kind": "fan",
+      "width": 8,
+      "depth": 4,
+      "x": 1,
+      "y": 1,
+      "angle": 45,
+      "radius_multiplier": 1.5,
+      "cv_900s": 0.20661567982790277,
+      "mass_ratio": 0.9999999999999931
+    },
+    {
+      "kind": "ac",
+      "width": 6,
+      "depth": 6,
+      "x": 3,
+      "y": 3,
+      "angle": 90,
+      "radius_multiplier": 0.75,
+      "cv_900s": 0.007043858992211814,
+      "mass_ratio": 1.0000000000000013
+    },
+    {
+      "kind": "ac",
+      "width": 6,
+      "depth": 6,
+      "x": 3,
+      "y": 3,
+      "angle": 90,
+      "radius_multiplier": 1.0,
+      "cv_900s": 0.009809667110825185,
+      "mass_ratio": 0.9999999999999599
+    },
+    {
+      "kind": "ac",
+      "width": 6,
+      "depth": 6,
+      "x": 3,
+      "y": 3,
+      "angle": 90,
+      "radius_multiplier": 1.5,
+      "cv_900s": 0.024626505333271646,
+      "mass_ratio": 1.00000000000002
+    },
+    {
+      "kind": "ac",
+      "width": 8,
+      "depth": 4,
+      "x": 2,
+      "y": 2,
+      "angle": 0,
+      "radius_multiplier": 0.75,
+      "cv_900s": 0.16945115768891,
+      "mass_ratio": 1.0000000000000062
+    },
+    {
+      "kind": "ac",
+      "width": 8,
+      "depth": 4,
+      "x": 2,
+      "y": 2,
+      "angle": 0,
+      "radius_multiplier": 1.0,
+      "cv_900s": 0.13067260563143246,
+      "mass_ratio": 0.9999999999999961
+    },
+    {
+      "kind": "ac",
+      "width": 8,
+      "depth": 4,
+      "x": 2,
+      "y": 2,
+      "angle": 0,
+      "radius_multiplier": 1.5,
+      "cv_900s": 0.07800574287228933,
+      "mass_ratio": 0.9999999999999838
+    },
+    {
+      "kind": "ac",
+      "width": 8,
+      "depth": 4,
+      "x": 1,
+      "y": 1,
+      "angle": 45,
+      "radius_multiplier": 0.75,
+      "cv_900s": 0.2705303364032432,
+      "mass_ratio": 1.0000000000000284
+    },
+    {
+      "kind": "ac",
+      "width": 8,
+      "depth": 4,
+      "x": 1,
+      "y": 1,
+      "angle": 45,
+      "radius_multiplier": 1.0,
+      "cv_900s": 0.16854131402700745,
+      "mass_ratio": 1.0000000000000286
+    },
+    {
+      "kind": "ac",
+      "width": 8,
+      "depth": 4,
+      "x": 1,
+      "y": 1,
+      "angle": 45,
+      "radius_multiplier": 1.5,
+      "cv_900s": 0.03440741374783097,
+      "mass_ratio": 0.9999999999999931
+    }
+  ],
+  "grid_checks": [
+    {
+      "width": 4,
+      "depth": 4,
+      "cell": 0.125,
+      "kind": "window",
+      "flow_ach": 3.960921930748875,
+      "decay_ach": 6.984189498768464
+    },
+    {
+      "width": 4,
+      "depth": 4,
+      "cell": 0.125,
+      "kind": "door",
+      "flow_ach": 6.25824251861591,
+      "decay_ach": 11.86283310561426
+    },
+    {
+      "width": 4,
+      "depth": 4,
+      "cell": 0.25,
+      "kind": "window",
+      "flow_ach": 3.924887991269085,
+      "decay_ach": 6.994149380973337
+    },
+    {
+      "width": 4,
+      "depth": 4,
+      "cell": 0.25,
+      "kind": "door",
+      "flow_ach": 6.169252853644113,
+      "decay_ach": 11.5180246467422
+    },
+    {
+      "width": 4,
+      "depth": 4,
+      "cell": 0.5,
+      "kind": "window",
+      "flow_ach": 3.859456180039229,
+      "decay_ach": 7.056376067841411
+    },
+    {
+      "width": 4,
+      "depth": 4,
+      "cell": 0.5,
+      "kind": "door",
+      "flow_ach": 6.0059482891076135,
+      "decay_ach": 11.053552833935585
+    },
+    {
+      "width": 6,
+      "depth": 6,
+      "cell": 0.125,
+      "kind": "window",
+      "flow_ach": 1.6971883367319245,
+      "decay_ach": 2.99333860599686
+    },
+    {
+      "width": 6,
+      "depth": 6,
+      "cell": 0.125,
+      "kind": "door",
+      "flow_ach": 2.6268831060740987,
+      "decay_ach": 4.71643814177932
+    },
+    {
+      "width": 6,
+      "depth": 6,
+      "cell": 0.25,
+      "kind": "window",
+      "flow_ach": 1.6820965232127867,
+      "decay_ach": 3.009359765846692
+    },
+    {
+      "width": 6,
+      "depth": 6,
+      "cell": 0.25,
+      "kind": "door",
+      "flow_ach": 2.5911027909669273,
+      "decay_ach": 4.646055543319274
+    },
+    {
+      "width": 6,
+      "depth": 6,
+      "cell": 0.5,
+      "kind": "window",
+      "flow_ach": 1.6545641735337897,
+      "decay_ach": 3.0511896315298075
+    },
+    {
+      "width": 6,
+      "depth": 6,
+      "cell": 0.5,
+      "kind": "door",
+      "flow_ach": 2.525030898595214,
+      "decay_ach": 4.548714704688238
+    },
+    {
+      "width": 8,
+      "depth": 4,
+      "cell": 0.125,
+      "kind": "window",
+      "flow_ach": 2.0142243801697375,
+      "decay_ach": 2.8025722222075213
+    },
+    {
+      "width": 8,
+      "depth": 4,
+      "cell": 0.125,
+      "kind": "door",
+      "flow_ach": 3.2143066735363814,
+      "decay_ach": 3.928502855233397
+    },
+    {
+      "width": 8,
+      "depth": 4,
+      "cell": 0.25,
+      "kind": "window",
+      "flow_ach": 1.9954719235145282,
+      "decay_ach": 2.8195267602691634
+    },
+    {
+      "width": 8,
+      "depth": 4,
+      "cell": 0.25,
+      "kind": "door",
+      "flow_ach": 3.16707797468219,
+      "decay_ach": 3.8996183521306564
+    },
+    {
+      "width": 8,
+      "depth": 4,
+      "cell": 0.5,
+      "kind": "window",
+      "flow_ach": 1.961565621183667,
+      "decay_ach": 2.859070173498622
+    },
+    {
+      "width": 8,
+      "depth": 4,
+      "cell": 0.5,
+      "kind": "door",
+      "flow_ach": 3.0807742188314196,
+      "decay_ach": 3.8609149958357225
+    }
+  ],
+  "single_opening_grid_checks": [
+    {
+      "kind": "window",
+      "cell": 0.125,
+      "outdoor": "calm",
+      "decay_ach": 0.9990128094255412
+    },
+    {
+      "kind": "window",
+      "cell": 0.125,
+      "outdoor": "moderate",
+      "decay_ach": 1.4232674028565457
+    },
+    {
+      "kind": "window",
+      "cell": 0.125,
+      "outdoor": "breezy",
+      "decay_ach": 1.686246717071705
+    },
+    {
+      "kind": "window",
+      "cell": 0.25,
+      "outdoor": "calm",
+      "decay_ach": 1.0106564705249477
+    },
+    {
+      "kind": "window",
+      "cell": 0.25,
+      "outdoor": "moderate",
+      "decay_ach": 1.4642078859461325
+    },
+    {
+      "kind": "window",
+      "cell": 0.25,
+      "outdoor": "breezy",
+      "decay_ach": 1.7552852806385373
+    },
+    {
+      "kind": "window",
+      "cell": 0.5,
+      "outdoor": "calm",
+      "decay_ach": 1.035935154292781
+    },
+    {
+      "kind": "window",
+      "cell": 0.5,
+      "outdoor": "moderate",
+      "decay_ach": 1.5522853519935274
+    },
+    {
+      "kind": "window",
+      "cell": 0.5,
+      "outdoor": "breezy",
+      "decay_ach": 1.8953917758602548
+    },
+    {
+      "kind": "door",
+      "cell": 0.125,
+      "outdoor": "calm",
+      "decay_ach": 1.1480639820018261
+    },
+    {
+      "kind": "door",
+      "cell": 0.125,
+      "outdoor": "moderate",
+      "decay_ach": 1.5757434483494697
+    },
+    {
+      "kind": "door",
+      "cell": 0.125,
+      "outdoor": "breezy",
+      "decay_ach": 1.7846175346883282
+    },
+    {
+      "kind": "door",
+      "cell": 0.25,
+      "outdoor": "calm",
+      "decay_ach": 1.167879165559146
+    },
+    {
+      "kind": "door",
+      "cell": 0.25,
+      "outdoor": "moderate",
+      "decay_ach": 1.6319732583639757
+    },
+    {
+      "kind": "door",
+      "cell": 0.25,
+      "outdoor": "breezy",
+      "decay_ach": 1.866320974848115
+    },
+    {
+      "kind": "door",
+      "cell": 0.5,
+      "outdoor": "calm",
+      "decay_ach": 1.2110414417881952
+    },
+    {
+      "kind": "door",
+      "cell": 0.5,
+      "outdoor": "moderate",
+      "decay_ach": 1.7499142427278125
+    },
+    {
+      "kind": "door",
+      "cell": 0.5,
+      "outdoor": "breezy",
+      "decay_ach": 2.024788303760078
+    }
+  ],
+  "time_checks": [
+    {
+      "case": "device",
+      "max_step_s": 0.25,
+      "runtime_s": 0.03548599313944578,
+      "relative_l1": 0.0004884948139078915,
+      "early_relative_l1": 0.0,
+      "diagnostics": "Solver square-balance-airflow-v5: backward Euler, 16 startup steps of 0.125 s, 1192 main steps of 0.25 s."
+    },
+    {
+      "case": "device",
+      "max_step_s": 1.0,
+      "runtime_s": 0.022136458894237876,
+      "relative_l1": 0.001130433869548142,
+      "early_relative_l1": 0.00011751006240956485,
+      "diagnostics": "Solver square-balance-airflow-v5: backward Euler, 17 startup steps of 0.122549019608 s, 715 main steps of 0.416666666667 s."
+    },
+    {
+      "case": "device",
+      "max_step_s": 2.0,
+      "runtime_s": 0.02201131684705615,
+      "relative_l1": 0.001130433869548142,
+      "early_relative_l1": 0.00011751006240956485,
+      "diagnostics": "Solver square-balance-airflow-v5: backward Euler, 17 startup steps of 0.122549019608 s, 715 main steps of 0.416666666667 s."
+    },
+    {
+      "case": "device",
+      "max_step_s": 5.0,
+      "runtime_s": 0.02227579802274704,
+      "relative_l1": 0.001130433869548142,
+      "early_relative_l1": 0.00011751006240956485,
+      "diagnostics": "Solver square-balance-airflow-v5: backward Euler, 17 startup steps of 0.122549019608 s, 715 main steps of 0.416666666667 s."
+    },
+    {
+      "case": "opening",
+      "max_step_s": 0.25,
+      "runtime_s": 0.020095801912248135,
+      "relative_l1": 0.0003321416734252125,
+      "early_relative_l1": 0.0,
+      "diagnostics": "Solver square-balance-airflow-v5: backward Euler, 16 startup steps of 0.125 s, 1192 main steps of 0.25 s."
+    },
+    {
+      "case": "opening",
+      "max_step_s": 1.0,
+      "runtime_s": 0.00887469993904233,
+      "relative_l1": 0.001372739439830184,
+      "early_relative_l1": 5.210488961893134e-05,
+      "diagnostics": "Solver square-balance-airflow-v5: backward Euler, 21 startup steps of 0.12315270936 s, 460 main steps of 0.646551724138 s."
+    },
+    {
+      "case": "opening",
+      "max_step_s": 2.0,
+      "runtime_s": 0.008546950994059443,
+      "relative_l1": 0.001372739439830184,
+      "early_relative_l1": 5.210488961893134e-05,
+      "diagnostics": "Solver square-balance-airflow-v5: backward Euler, 21 startup steps of 0.12315270936 s, 460 main steps of 0.646551724138 s."
+    },
+    {
+      "case": "opening",
+      "max_step_s": 5.0,
+      "runtime_s": 0.008497840026393533,
+      "relative_l1": 0.001372739439830184,
+      "early_relative_l1": 5.210488961893134e-05,
+      "diagnostics": "Solver square-balance-airflow-v5: backward Euler, 21 startup steps of 0.12315270936 s, 460 main steps of 0.646551724138 s."
+    }
+  ],
+  "resolution_checks": [
+    {
+      "cell": 0.25,
+      "probe_relative_l1": 0.0,
+      "mass_relative_l1": 0.0
+    },
+    {
+      "cell": 0.4,
+      "probe_relative_l1": 0.17805273830890656,
+      "mass_relative_l1": 4.0506968162025106e-09
+    },
+    {
+      "cell": 0.5,
+      "probe_relative_l1": 0.12935984134674072,
+      "mass_relative_l1": 6.633860784180159e-09
+    }
+  ],
+  "device_combination_checks": [
+    {
+      "case": "off",
+      "cv_900s": 0.3098527788320889,
+      "mass_ratio": 1.000000000000002
+    },
+    {
+      "case": "fan",
+      "cv_900s": 0.013917409361632917,
+      "mass_ratio": 1.0000000000000049
+    },
+    {
+      "case": "ac",
+      "cv_900s": 0.01899193249285735,
+      "mass_ratio": 0.9999999999999954
+    },
+    {
+      "case": "both_aligned",
+      "cv_900s": 0.011751786035476282,
+      "mass_ratio": 0.999999999999997
+    },
+    {
+      "case": "both_opposed",
+      "cv_900s": 0.0024122276006387777,
+      "mass_ratio": 0.9999999999999728
+    }
+  ]
+}

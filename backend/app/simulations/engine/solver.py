@@ -16,7 +16,9 @@ from app.simulations.engine.models import EngineOutput, PreparedSimulation, Reso
 from app.simulations.engine.state import grid_signature, initial_concentrations
 from app.simulations.errors import PreparationError, SimulationError
 
-SOLVER_VERSION = "square-balance-airflow-v3"
+SOLVER_VERSION = "square-balance-airflow-v5"
+STARTUP_MAX_STEP_S = .125
+STARTUP_DURATION_S = 2.
 
 
 @dataclass(frozen=True)
@@ -27,7 +29,7 @@ class SolverOptions:
     requirements or scientific constants. Smaller max_step_s enables convergence tests.
     """
 
-    max_step_s: float = 0.25
+    max_step_s: float = 2.0
     max_steps: int = 200_000
 
     def __post_init__(self):
@@ -111,7 +113,7 @@ def _check_state(values: np.ndarray) -> float:
 def simulate(prepared: PreparedSimulation, options: SolverOptions | None = None) -> EngineOutput:
     """Advance the entire run, exporting snapshots without changing the solver clock.
 
-    All channels share one sparse factorization. Internal time is relative to this
+    All channels share each sparse factorization (startup and main steps). Internal time is relative to this
     run; the returned compact final state also carries elapsed continuation time.
     Native factorization/solve calls cannot be hard-interrupted here: job execution
     must enforce a process timeout when this engine is connected to the API.
@@ -131,11 +133,21 @@ def simulate(prepared: PreparedSimulation, options: SolverOptions | None = None)
     removal = data.parameters.removal_rate_per_s
     if not math.isfinite(spreading) or spreading <= 0 or not math.isfinite(removal) or removal < 0:
         raise SimulationError("numerical_range", "Transport parameters are outside numerical limits.")
-    target_step = min(options.max_step_s, 0.25 / spreading, 0.05 / removal if removal else math.inf)
+    # Preserve short-run startup accuracy without imposing tiny steps on hours.
+    target_step = min(options.max_step_s, data.duration_s / 4,
+                      0.25 / spreading, 0.05 / removal if removal else math.inf)
+    if run.airflow_field is not None:
+        field = run.airflow_field
+        cells = np.array([edge.cell_index for edge in run.exterior_openings], dtype=int)
+        # Several opening pieces can map to one cell; cap the aggregate loss.
+        losses = np.bincount(cells, weights=np.maximum(field.boundary_outflow, 0) + field.boundary_exchange, minlength=count) / grid.cell_size_m ** 2
+        max_loss = float(losses.max())
+        if max_loss > 0:
+            target_step = min(target_step, .25 / max_loss)
     if run.airflow_field is not None and len(run.airflow_field.edge_flux):
         speed = np.max(np.abs(run.airflow_field.edge_flux)) / grid.cell_size_m
         if speed > 0:
-            target_step = min(target_step, 0.5 * grid.cell_size_m / speed)
+            target_step = min(target_step, 0.2 * grid.cell_size_m / speed)
     ratio = data.duration_s / target_step if target_step > 0 else math.inf
     if not math.isfinite(ratio) or ratio > options.max_steps:
         raise PreparationError("resource_limit", "Requested duration/parameters require too many internal solver steps.")
@@ -158,43 +170,64 @@ def simulate(prepared: PreparedSimulation, options: SolverOptions | None = None)
     clipped = _check_state(state)
     rates = source_rates(run)
     operator = transport_matrix(run)
-    matrix = step_s * operator + (1 + step_s * removal) * eye(count, format="csc")
-    if not np.isfinite(matrix.data).all():
-        raise SimulationError("numerical_range", "The numerical transport matrix is not finite.")
-    budget.check_deadline(started)
-    try:
-        factor = splu(matrix)
-    except (RuntimeError, ValueError) as exc:
-        raise SimulationError("solver_failure", "Sparse transport factorization failed.") from exc
-    budget.check_deadline(started)
-    factors = (factor.L, factor.U)
-    factor_bytes = sum(part.data.nbytes + part.indices.nbytes + part.indptr.nbytes for part in factors)
-    # Native factors and Python sparse factor views may both occupy memory.
-    budget.check_memory(base_bytes + 2 * factor_bytes + factor.perm_r.nbytes + factor.perm_c.nbytes)
+    # Resolve the source/startup transient independently of requested snapshots.
+    # Cover at least the first two seconds, even when airflow limits the main
+    # step below one second. Later steps reuse a second factorization.
+    startup_main_steps = (min(steps, math.ceil(STARTUP_DURATION_S / step_s))
+                          if step_s > STARTUP_MAX_STEP_S else 0)
+    startup_duration = startup_main_steps * step_s
+    startup_steps = math.ceil(startup_duration / STARTUP_MAX_STEP_S) if startup_main_steps else 0
+    main_steps = steps - startup_main_steps
+    stages = ([(startup_steps, startup_duration / startup_steps), (main_steps, step_s)]
+              if startup_steps else [(steps, step_s)])
+    stages = [(count_steps, dt) for count_steps, dt in stages if count_steps]
+    if main_steps + startup_steps > options.max_steps:
+        raise PreparationError("resource_limit", "Requested duration/parameters require too many internal solver steps.")
     fields = np.zeros((len(samples), channels, grid.rows, grid.columns), dtype=np.float32)
     snapshot_index = 0
-    for step in range(1, steps + 1):
+    stage_start = 0.
+    factor = None
+    for stage_index, (stage_steps, dt) in enumerate(stages):
+        # Release the previous native factor before allocating its replacement.
+        factor = None
+        matrix = dt * operator + (1 + dt * removal) * eye(count, format="csc")
+        if not np.isfinite(matrix.data).all():
+            raise SimulationError("numerical_range", "The numerical transport matrix is not finite.")
         budget.check_deadline(started)
-        left = (step - 1) * step_s
-        right = data.duration_s if step == steps else step * step_s
-        with np.errstate(over="ignore", invalid="ignore"):
-            rhs = state + step_s * rates
-        if not np.isfinite(rhs).all():
-            raise SimulationError("numerical_range", "Source accumulation exceeded numerical limits.")
         try:
-            following = factor.solve(rhs)
+            factor = splu(matrix)
         except (RuntimeError, ValueError) as exc:
-            raise SimulationError("solver_failure", "Sparse transport solve failed.") from exc
-        clipped += _check_state(following)
-        while snapshot_index < len(samples) and samples[snapshot_index] <= right:
+            raise SimulationError("solver_failure", "Sparse transport factorization failed.") from exc
+        budget.check_deadline(started)
+        factors = (factor.L, factor.U)
+        factor_bytes = sum(part.data.nbytes + part.indices.nbytes + part.indptr.nbytes for part in factors)
+        budget.check_memory(base_bytes + 2 * factor_bytes + factor.perm_r.nbytes + factor.perm_c.nbytes)
+        del factors, matrix
+        for step in range(1, stage_steps + 1):
             budget.check_deadline(started)
-            fraction = min(1.0, max(0.0, (samples[snapshot_index] - left) / (right - left)))
-            snapshot = (1 - fraction) * state + fraction * following
-            if snapshot.max() > np.finfo(np.float32).max:
-                raise SimulationError("output_range", "Concentrations exceed float32 output range.")
-            fields[snapshot_index][:, grid.active_mask] = snapshot.T
-            snapshot_index += 1
-        state = following
+            left = stage_start + (step - 1) * dt
+            right = stage_start + step * dt
+            if step == stage_steps and stage_index == len(stages) - 1:
+                right = data.duration_s
+            with np.errstate(over="ignore", invalid="ignore"):
+                rhs = state + dt * rates
+            if not np.isfinite(rhs).all():
+                raise SimulationError("numerical_range", "Source accumulation exceeded numerical limits.")
+            try:
+                following = factor.solve(rhs)
+            except (RuntimeError, ValueError) as exc:
+                raise SimulationError("solver_failure", "Sparse transport solve failed.") from exc
+            clipped += _check_state(following)
+            while snapshot_index < len(samples) and samples[snapshot_index] <= right:
+                budget.check_deadline(started)
+                fraction = min(1.0, max(0.0, (samples[snapshot_index] - left) / (right - left)))
+                snapshot = (1 - fraction) * state + fraction * following
+                if snapshot.max() > np.finfo(np.float32).max:
+                    raise SimulationError("output_range", "Concentrations exceed float32 output range.")
+                fields[snapshot_index][:, grid.active_mask] = snapshot.T
+                snapshot_index += 1
+            state = following
+        stage_start += stage_steps * dt
     if snapshot_index != len(samples):
         raise SimulationError("numerical_failure", "The solver did not produce every requested snapshot.")
     elapsed = (run.initial_state.elapsed_time_s if run.initial_state is not None else 0) + data.duration_s
@@ -203,7 +236,9 @@ def simulate(prepared: PreparedSimulation, options: SolverOptions | None = None)
     final = ResolvedInitialState(grid_signature(grid), data.model_version, elapsed, run.channels, final_values)
     result = EngineOutput(
         grid, samples.copy(), fields,
-        diagnostics=(f"Solver {SOLVER_VERSION}: backward Euler, {steps} uniform steps of {step_s:.12g} s.",
+        diagnostics=((f"Solver {SOLVER_VERSION}: backward Euler, {steps} uniform steps of {step_s:.12g} s."
+                      if not startup_steps else
+                      f"Solver {SOLVER_VERSION}: backward Euler, {startup_steps} startup steps of {startup_duration/startup_steps:.12g} s, {main_steps} main steps of {step_s:.12g} s."),
                      "Output times select linearly interpolated snapshots; they do not alter integration steps.",
                      f"Roundoff clipping added {clipped * grid.cell_size_m ** 2:.12g} relative units."),
         channels=run.channels, final_state=final,

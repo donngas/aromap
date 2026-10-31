@@ -295,3 +295,26 @@ def test_solver_resource_guards_and_numerical_failures(monkeypatch):
     with pytest.raises(SimulationError) as error:
         simulate(huge)
     assert error.value.code == "output_range"
+
+
+def test_long_run_resolves_early_source_transient_without_sampling_selecting_steps():
+    from dataclasses import replace
+    run = _prepare(_config(duration=60, sample_times=(0,1,10,60), diffusivity=.005), {'A1':1})
+    reference = simulate(run, SolverOptions(max_step_s=.015625))
+    output = simulate(run)
+    assert np.abs(output.concentration[1]-reference.concentration[1]).sum()/reference.concentration[1].sum() < .05
+    np.testing.assert_allclose(output.concentration.sum(axis=(1,2,3))*run.grid.cell_size_m**2, [0,1,10,60], rtol=1e-6)
+    sparse = replace(run, input=run.input.model_copy(update={'sample_times_s':[1.,60.]}))
+    np.testing.assert_array_equal(simulate(sparse).concentration, output.concentration[[1,3]])
+    assert 'startup steps' in output.diagnostics[0]
+
+
+def test_startup_accuracy_with_strong_device_and_exterior_flow():
+    from dataclasses import replace
+    from scripts.calibrate_presets import opening_run
+    from scripts.calibrate_airflow import prepared
+    for run in (prepared(6,6,device='high'), opening_run(cross=True,outdoor='breezy')):
+        run = replace(run,input=run.input.model_copy(update={'duration_s':60.,'sample_times_s':[1.,60.]}))
+        reference = simulate(run,SolverOptions(max_step_s=.015625)).concentration
+        default = simulate(run).concentration
+        assert np.abs(default[0]-reference[0]).sum()/reference[0].sum() < .05
