@@ -124,6 +124,22 @@ def test_storefront_window_beside_entrance_in_one_gap() -> None:
     )
 
 
+def test_dashed_swing_arc_is_a_door() -> None:
+    # CAD exports often draw the swing as a dashed arc: 6 px dashes, 3 px breaks.
+    segments = [
+        WallSegment("horizontal", 100, 0, 200),
+        WallSegment("vertical", 0, 0, 300),
+        WallSegment("vertical", 260, 0, 300),
+    ]
+    details = _blank()
+    for start in range(0, 90, 9):
+        _swing(details, (200, 100), 60, start, start + 6)
+
+    _, openings = find_openings(segments, _blank(), details, thickness=10)
+
+    assert _door_spans(openings) == [(200, 260)]
+
+
 def test_round_table_in_gap_is_not_a_door() -> None:
     segments = [
         WallSegment("horizontal", 100, 0, 200),

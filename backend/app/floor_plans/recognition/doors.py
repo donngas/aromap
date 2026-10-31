@@ -25,9 +25,13 @@ MIN_DOOR_RATIO = 2
 # Straight runs at least this long (px, and at least the wall thickness) are
 # door leaves, thresholds, or furniture edges, removed before fitting arcs.
 MIN_STRAIGHT_RUN_PX = 9
-# Dashed arcs (common in CAD exports) are joined across breaks up to this many
-# pixels before fitting, so their dashes are fitted as one arc.
+# Dashed arcs (common in CAD exports) break into pieces too small to fit. Only
+# such small pieces are joined across breaks up to this many pixels and fitted
+# again, so plans with solid arcs pay almost nothing for dash support.
 DASH_JOIN_PX = 5
+# A joined group is fitted only if it has at least this many dashes; leftover
+# fragments of grids, text, and furniture rarely line up that often.
+MIN_DASHES = 4
 # An arc belongs to a gap when its hinge lies near the gap's wall line and at
 # least MIN_SWING_IN_GAP of its swing lies in the gap. Hinges sit on the wall face,
 # and hand-drawn or dashed arcs fit a little off, more so for larger arcs: "near"
@@ -58,16 +62,38 @@ def find_door_arcs(
         curves[cv2.dilate(wall_pixels, np.ones((5, 5), np.uint8)) > 0] = 0
     straight = cv2.dilate(_straight_runs(curves, thickness), np.ones((3, 3), np.uint8))
     curves = cv2.subtract(curves, straight)
-    joined = cv2.dilate(curves, np.ones((DASH_JOIN_PX, DASH_JOIN_PX), np.uint8))
-    count, labels, stats, _ = cv2.connectedComponentsWithStats(joined, connectivity=8)
     min_radius = MIN_DOOR_RATIO * thickness
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(curves, connectivity=8)
+    arcs, small = [], np.zeros_like(curves)
+    for label in range(1, count):
+        x, y, width, height, _ = stats[label]
+        piece = labels[y : y + height, x : x + width] == label
+        if max(width, height) < min_radius / 2:
+            small[y : y + height, x : x + width][piece] = 255  # maybe a dash
+            continue
+        ys, xs = np.nonzero(piece)
+        arc = _fit_arc(xs + x, ys + y)
+        if arc is not None and min_radius <= arc.radius <= max_radius:
+            arcs.append(arc)
+    arcs.extend(_dashed_arcs(small, min_radius, max_radius))
+    return arcs
+
+
+def _dashed_arcs(dashes: np.ndarray, min_radius: float, max_radius: float) -> list[DoorArc]:
+    """Arcs from small pieces joined across short breaks (dashed swing arcs)."""
+    joined = cv2.dilate(dashes, np.ones((DASH_JOIN_PX, DASH_JOIN_PX), np.uint8))
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(joined, connectivity=8)
+    # Count the dashes in each joined group via each dash's centroid.
+    _, _, _, centroids = cv2.connectedComponentsWithStats(dashes, connectivity=8)
+    cx, cy = np.rint(centroids[1:]).astype(int).T
+    dash_counts = np.bincount(labels[cy, cx], minlength=count)
     arcs = []
     for label in range(1, count):
         x, y, width, height, _ = stats[label]
-        if max(width, height) < min_radius / 2:
+        if dash_counts[label] < MIN_DASHES or max(width, height) < min_radius / 2:
             continue
         group = labels[y : y + height, x : x + width] == label
-        ys, xs = np.nonzero(group & (curves[y : y + height, x : x + width] > 0))
+        ys, xs = np.nonzero(group & (dashes[y : y + height, x : x + width] > 0))
         arcs.extend(
             arc for arc in _fit_arcs(xs + x, ys + y) if min_radius <= arc.radius <= max_radius
         )
