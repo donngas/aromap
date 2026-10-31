@@ -49,10 +49,10 @@ closed walls block transport and open interior doors connect rooms.
 
 ### 1. Transport balance
 
-$$
+```math
 \frac{\partial C}{\partial t}
 =D\nabla^2C-\nabla\cdot(\mathbf uC)+S-\lambda C
-$$
+```
 
 $D$ is effective diffusivity (m²/s), $\mathbf u$ airflow velocity (m/s), $S$
 emission per area per second, and $\lambda$ background removal rate (s⁻¹).
@@ -63,9 +63,9 @@ Opening losses are boundary terms. The engine solves discrete cell balances.
 
 ### 2. Diffuser emission
 
-$$
+```math
 E=s\frac{M}{dH\,3600},\qquad M=1000\rho V,\qquad S_i=\frac{Ew_i}{h^2}
-$$
+```
 
 $E$ is relative emission per second; $M$ refill mass in mg; $d$ rated lifetime
 in days; $H$ rated operating hours/day; $s$ explicit strength multiplier.
@@ -81,10 +81,10 @@ and default density are project assumptions, not experimentally validated emissi
 
 ### 3. Background mixing
 
-$$
+```math
 \dot C_i\big|_{\mathrm{mixing}}
 =\sum_{j\sim i}\frac{D}{h^2}(C_j-C_i)
-$$
+```
 
 $j\sim i$ denotes connected neighbouring cells. Low/medium/high presets are
 $D=0.002/0.0045/0.006$ m²/s; medium is the default. This represents unresolved
@@ -97,10 +97,10 @@ Cheng et al. [2]. Rounded presets are not room-specific validation.
 
 ### 4. Fan and recirculating A/C push
 
-$$
+```math
 q^*_{ij}=\sum_d U_d\exp\left(-\frac{r_d^2}{2\sigma_d^2}\right)
 \left[(\mathbf x_j-\mathbf x_i)\cdot\hat{\mathbf d}_d\right]
-$$
+```
 
 For device $d$, $U_d$ is push strength, $\sigma_d$ influence radius,
 $\hat{\mathbf d}_d$ its unit direction, and $r_d$ distance from the device to the
@@ -118,10 +118,10 @@ validation of this device model is claimed. A/C has no cooling or outdoor-air su
 
 ### 5. Airflow projection
 
-$$
+```math
 q_{ij}=q^*_{ij}+\phi_i-\phi_j,\qquad
 \sum_jq_{ij}+\sum_bq_{\mathrm{out},b}=0
-$$
+```
 
 $\phi_i$ is a correction potential (m²/s); $b$ indexes boundary pieces attached
 to the cell. Potentials enforce local air balance. Internal square-face
@@ -133,11 +133,11 @@ projection does not solve the full Navier–Stokes equations or physical pressur
 
 ### 6. Wind-driven exterior flow
 
-$$
+```math
 \phi_{\mathrm{outside}}=-A\hat{\mathbf d}_{\mathrm{wind}}\cdot\hat{\mathbf n},
 \qquad
 q_{\mathrm{out}}=\frac{w}{L+h/2}(\phi_i-\phi_{\mathrm{outside}})
-$$
+```
 
 $w$ is represented opening-piece width, $\hat{\mathbf n}$ the outward unit normal,
 and $L$ an effective resistance length: 2 m for windows, 1 m for doors.
@@ -152,11 +152,11 @@ ventilation-model context; it does not establish this formula or its coefficient
 
 ### 7. Opening exchange and removal
 
-$$
+```math
 q_{\mathrm{exchange}}=wv,\qquad
 \dot C_i\big|_{\mathrm{opening}}
 =-\frac{\sum_b[\max(q_{\mathrm{out},b},0)+q_{\mathrm{exchange},b}]}{h^2}C_i
-$$
+```
 
 $v$ is an effective two-way exchange velocity. Outdoor scent concentration is
 zero; outgoing air removes scent. State is binary open/closed. Interior doors
@@ -173,10 +173,10 @@ connect cells without outdoor loss.
 
 ### 8. Airflow transport of scent
 
-$$
+```math
 F_{ij}=q_{ij}C_{\mathrm{upstream}},\qquad
 \dot C_i=-F_{ij}/h^2,\quad \dot C_j=+F_{ij}/h^2
-$$
+```
 
 $F_{ij}$ is the signed scent transfer per second. The upstream cell follows the
 sign of $q_{ij}$. Transfers conserve scent between cells.
@@ -187,10 +187,10 @@ which increases with coarser cells.
 
 ### 9. Background dilution
 
-$$
+```math
 \lambda=\mathrm{ACH}/3600,\qquad \dot C=-\lambda C,
 \qquad C(t)=C_0e^{-\lambda t}
-$$
+```
 
 ACH is air changes per hour; $C_0$ is initial concentration. Default background
 removal is 0.5 ACH and excludes explicitly modeled openings. The exponential is
@@ -203,9 +203,9 @@ scenario value, not a universal ventilation rate.
 
 ### 10. Time integration
 
-$$
+```math
 [I+\Delta t(K+\lambda I)]C^{n+1}=C^n+\Delta tS
-$$
+```
 
 $K$ is the discrete transport/loss matrix, $I$ the identity, $n$ the step index,
 and $\Delta t$ the integration step. Main steps are at most 2 s, with additional
@@ -219,11 +219,11 @@ caps are project accuracy policies, not physical constants.
 
 ### 11. Automatic spatial resolution
 
-$$
+```math
 N_* = \frac{10{,}000}{\sqrt{\max(1,P)}}
 \min\left(1,\sqrt{\frac{3600}{T}}\right),\qquad
 h_{\mathrm{desired}}=\sqrt{\frac{A_{\mathrm{bbox}}}{N_*}}
-$$
+```
 
 $P$ is source-channel count, $T$ duration in seconds, and $A_{\mathrm{bbox}}$
 bounding-box area in m². Resource limits further constrain $N_*$. Width rounds
@@ -236,14 +236,14 @@ safeguards can refine it. Explicit `settings.grid_cell_size_m` overrides selecti
 
 ### 12. Coverage and colour
 
-$$
-\mathrm{Coverage}=100\frac{\#\{i:\sum_pC_{p,i}\ge1\}}
-{\#\{\text{active cells}\}},\qquad
+```math
+\mathrm{Coverage}=100\frac{N_{\mathrm{reached}}}{N_{\mathrm{active}}},\qquad
 \ell=\frac{\ln(1+40C/C_{\max})}{\ln41}
-$$
+```
 
-$p$ indexes diffuser channels; $\#$ denotes cell count. Coverage sums all channels
-at the selected time. For colour level $\ell$, $C$ is the selected-channel sum
+$N_{\mathrm{active}}$ counts indoor cells; $N_{\mathrm{reached}}$ counts those
+with $\sum_p C_{p,i} \ge 1$ at the selected time. $p$ indexes diffuser channels.
+For colour level $\ell$, $C$ is the selected-channel sum
 and $C_{\max}$ its maximum across the run. Values below the coverage threshold
 can remain visible; each run has its own colour normalization.
 
