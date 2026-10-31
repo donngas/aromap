@@ -62,6 +62,90 @@ def test_gap_to_wall_with_swing_arc_is_bridged() -> None:
     assert WallSegment("horizontal", 100, 0, 260) in walls
 
 
+def _door_spans(openings) -> list[tuple[float, float]]:
+    """Door spans rounded to 2 px: arcs are fitted, so ends can be a pixel off."""
+    return [
+        (2 * round(o.span.start / 2), 2 * round(o.span.end / 2))
+        for o in openings
+        if o.kind == "door"
+    ]
+
+
+def test_door_covers_its_swing_and_hinge_stub_stays_wall() -> None:
+    # A stockroom wall stops 80 px short of the wall at x=280. The door hinges on
+    # a 20 px stub (too short to detect) at x=260 and swings back to x=200.
+    segments = [
+        WallSegment("horizontal", 100, 0, 200),
+        WallSegment("vertical", 0, 0, 300),
+        WallSegment("vertical", 280, 0, 300),
+    ]
+    details = _swing(_blank(), (260, 100), 60, 180, 270)
+
+    walls, openings = find_openings(segments, _blank(), details, thickness=10)
+
+    assert _door_spans(openings) == [(200, 260)]
+    assert WallSegment("horizontal", 100, 0, 280) in walls
+
+
+def test_door_frame_beside_arc_joins_door() -> None:
+    # The arc stops 5 px (under one wall thickness) short of each wall end: door frames.
+    segments = [
+        WallSegment("horizontal", 100, 0, 200),
+        WallSegment("vertical", 0, 0, 300),
+        WallSegment("vertical", 280, 0, 300),
+    ]
+    details = _swing(_blank(), (275, 100), 70, 180, 270)
+
+    _, openings = find_openings(segments, _blank(), details, thickness=10)
+
+    assert _door_spans(openings) == [(200, 280)]
+
+
+def test_round_table_in_gap_is_not_a_door() -> None:
+    segments = [
+        WallSegment("horizontal", 100, 0, 200),
+        WallSegment("vertical", 0, 0, 300),
+        WallSegment("vertical", 280, 0, 300),
+    ]
+    details = cv2.circle(_blank(), (240, 60), 30, 255, 1)
+
+    walls, openings = find_openings(segments, _blank(), details, thickness=10)
+
+    assert openings == []
+    assert WallSegment("horizontal", 100, 0, 200) in walls
+
+
+def test_passage_between_two_room_corners_stays_open() -> None:
+    # A kitchen and a restroom both end on the line y=100, 60 px apart, with their
+    # side walls turning up: open floor between them, not a doorway.
+    segments = [
+        WallSegment("horizontal", 100, 0, 100),
+        WallSegment("vertical", 100, 0, 100),
+        WallSegment("horizontal", 100, 160, 300),
+        WallSegment("vertical", 160, 0, 100),
+    ]
+
+    _, openings = find_openings(segments, _blank(), _blank(), thickness=10)
+
+    assert openings == []
+
+
+def test_gap_between_corners_turning_apart_is_a_doorway() -> None:
+    # One side wall turns up, the other down: a doorway between two rooms.
+    segments = [
+        WallSegment("horizontal", 100, 0, 100),
+        WallSegment("vertical", 100, 0, 100),
+        WallSegment("horizontal", 100, 160, 300),
+        WallSegment("vertical", 160, 100, 200),
+    ]
+
+    _, openings = find_openings(segments, _blank(), _blank(), thickness=10)
+
+    assert [(o.kind, o.span) for o in openings] == [
+        ("door", WallSegment("horizontal", 100, 100, 160))
+    ]
+
+
 def test_wall_ending_in_open_room_is_not_bridged() -> None:
     segments = [
         WallSegment("horizontal", 100, 0, 200),

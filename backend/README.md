@@ -602,6 +602,22 @@ other images still return a draft, but expect to correct or trace it manually.
 When a plan looks unsupported (much of its wall-like content is detached
 clutter), the draft includes a warning that results may be unreliable.
 
+#### Base layout format
+
+Recognition is tuned against one reference style: a shop plan like
+[`cafe_plan.png`](tests/floor_plans/recognition/fixtures/cafe_plan.png). Plans
+drawn this way are expected to come out right without manual fixes:
+
+| Element | How it is drawn | How it is read |
+| --- | --- | --- |
+| Wall | Solid band clearly thicker than other lines | Wall centerline; short returns at corners and beside doors (at least one wall thickness long) are kept when they meet a longer wall |
+| Door | Gap in a wall with a quarter-circle swing arc centered on the hinge | Door from the hinge to the arc's end; two facing arcs make a double door. A door frame under one wall thickness joins the door |
+| Window | Gap in a wall with 2+ thin parallel lines inside the wall's thickness | Window across the gap |
+| Doorway | Door-sized gap between aligned walls, no symbol | Door, unless both sides are room corners turning the same way (open floor, e.g. a passage), which stays open |
+
+Door swings are found as arcs first (circle fit on curved strokes), so text,
+furniture outlines, and full circles such as round tables are not read as doors.
+
 - Caller supplies an absolute path to a prepared image, retains it throughout the
   call, and owns storage/cleanup. Recognition must not modify/delete the original.
 - Recognizer generates layout/geometry IDs and returns revision `1`, matching image
@@ -610,6 +626,11 @@ clutter), the draft includes a warning that results may be unreliable.
   `None` with a warning when unavailable. Map its vertices back after any internal
   resizing/rotation, just as for wall endpoints. Estimation is left to the
   recognition implementation; consumers may review/correct or trace the domain.
+  The OpenCV recognizer ([`indoor.py`](app/floor_plans/recognition/indoor.py))
+  closes doors and windows, fills the outdoors in from the image edge, and traces
+  everything left (all rooms and the walls between them) as **one** `boundary`
+  along the outer face of the outer walls, with no `holes`. When the outer walls
+  are not closed, it returns `None` with a warning.
 - Internal resizing/rotation must map back to input image coordinates: top-left
   origin, x rightward, y downward.
 - Walls are nonzero, zero-thickness segments split at every crossing and T-junction.

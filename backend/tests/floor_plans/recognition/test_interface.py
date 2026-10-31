@@ -6,7 +6,7 @@ import pytest
 
 from app.floor_plans.models import Layout, PixelPoint, RecognitionDraft, Wall
 from app.floor_plans.recognition.interface import RecognitionError, recognize_floor_plan
-from app.floor_plans.recognition.pipeline import UNSUPPORTED_WARNING
+from app.floor_plans.recognition.pipeline import NO_INDOOR_WARNING, UNSUPPORTED_WARNING
 
 FIXTURES = Path(__file__).parent / "fixtures"
 # Images in fixtures/local are git-ignored (unclear or unrecorded redistribution
@@ -135,11 +135,20 @@ def cafe(drafts) -> Layout:
         ((309, 875), (443, 875)),  # double entrance door
         ((422, 224), (422, 282)),  # kitchen passage
         ((188, 196), (251, 196)),  # left restroom door
-        ((347, 196), (422, 196)),  # right restroom door, ending at a wall
+        ((347, 196), (404, 196)),  # right restroom door, hinged on a short stub
     ],
 )
 def test_cafe_doors(cafe: Layout, start, end) -> None:
     assert _has_opening(cafe.doors, start, end), cafe.doors
+
+
+def test_cafe_indoor_domain_is_the_shop_outline(cafe: Layout) -> None:
+    assert cafe.indoor_domain is not None
+    boundary = cafe.indoor_domain.boundary
+    expected = [(93, 16), (90, 878), (937, 881), (940, 19)]
+    assert len(boundary) == len(expected)
+    assert all(any(_near(point, x, y, tolerance=6) for point in boundary) for x, y in expected)
+    assert cafe.indoor_domain.holes == []
 
 
 def test_cafe_window(cafe: Layout) -> None:
@@ -232,7 +241,8 @@ def test_blank_image_returns_empty_layout_with_warning(tmp_path: Path) -> None:
     draft = recognize_floor_plan(path)
 
     assert draft.floor_plan.layout.walls == []
-    assert draft.warnings
+    assert draft.floor_plan.layout.indoor_domain is None
+    assert NO_INDOOR_WARNING in draft.warnings
 
 
 def test_unreadable_image_raises_recognition_error(tmp_path: Path) -> None:
