@@ -1,0 +1,37 @@
+{
+  "run_id": "example-run",
+  "input_fingerprint": "example-resolved-input-fingerprint",
+  "model_version": "example-only",
+  "grid": {
+    "origin_m": {"x": 0, "y": 0},
+    "cell_size_m": 0.25,
+    "rows": 16,
+    "columns": 24,
+    "x_direction": "right",
+    "y_direction": "down",
+    "cell_position": "center"
+  },
+  "channels": [
+    {"channel_id": "channel-A1", "placement_id": "A1", "definition_id": "A"},
+    {"channel_id": "channel-A2", "placement_id": "A2", "definition_id": "A"},
+    {"channel_id": "channel-B1", "placement_id": "B1", "definition_id": "B"}
+  ],
+  "sample_times_s": [0, 60, 120, 180, 240, 300, 360, 420, 480, 540, 600],
+  "fields": {
+    "url": "/api/simulations/example-run/fields",
+    "encoding": "example-only-not-selected",
+    "axes": ["time", "channel", "row", "column"],
+    "shape": [11, 3, 16, 24],
+    "units": "relative_units_per_m2"
+  },
+  "active_domain_mask": {
+    "url": "/api/simulations/example-run/mask",
+    "encoding": "example-only-not-selected",
+    "axes": ["row", "column"],
+    "shape": [16, 24]
+  },
+  "resolved_assumptions": ["Schema example only; no numerical model or emission conversion has been executed."],
+  "diagnostics": [],
+  "warnings": [],
+  "expires_at": "2026-11-01T09:00:00Z"
+}
