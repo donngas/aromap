@@ -43,11 +43,15 @@ MIN_GLAZING_LINES = 2
 # wider one reaches floor-color edges.
 GLAZING_BAND_RATIOS = (0.5, 0.75)
 # Glazing is a few thin lines; if more of the band than this is covered, it is a
-# filled area (e.g. a floor color) rather than a window.
-MAX_GLAZING_LINE_FRACTION = 0.7
+# filled area (e.g. a floor color) rather than a window. On thin walls the band is
+# only a few pixels, so two frame lines alone already cover most of it.
+MAX_GLAZING_LINE_FRACTION = 0.8
 # Each glazing line (or tight group of lines) is at most this fraction of the wall
-# thickness (minimum 3 px); wider bands are edges between floor colors, not glass.
+# thickness; wider bands are edges between floor colors, not glass.
 MAX_GLAZING_LINE_WIDTH_RATIO = 1 / 2
+# Minimum allowed glazing line width (px), so on thin walls a frame line that
+# touches a fixture edge (e.g. a stockroom shelf against the window) still counts.
+MIN_GLAZING_LINE_WIDTH_PX = 4
 
 OpeningKind = Literal["door", "window"]
 
@@ -374,5 +378,5 @@ def _has_glazing_in_band(band: np.ndarray, thickness: int) -> bool:
     # Separate lines are runs of consecutive covered rows.
     edges = np.flatnonzero(np.diff(np.concatenate(([0], covered.astype(int), [0]))))
     widths = edges[1::2] - edges[::2]
-    max_width = max(3, thickness * MAX_GLAZING_LINE_WIDTH_RATIO)
+    max_width = max(MIN_GLAZING_LINE_WIDTH_PX, thickness * MAX_GLAZING_LINE_WIDTH_RATIO)
     return len(widths) >= MIN_GLAZING_LINES and bool((widths <= max_width).all())

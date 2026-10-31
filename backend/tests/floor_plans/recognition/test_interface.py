@@ -285,6 +285,7 @@ def test_colored_home_arcs_mark_doors(colored_home: Layout, start, end) -> None:
         ((153, 381), (219, 381)),  # washroom
         ((467, 381), (532, 381)),  # study
         ((434, 67), (553, 67)),  # bedroom, wider than 15x the thin walls
+        ((578, 212), (578, 242)),  # bathroom, frame line touching the bathtub
     ],
 )
 def test_colored_home_windows(colored_home: Layout, start, end) -> None:
@@ -297,6 +298,7 @@ def test_colored_home_windows(colored_home: Layout, start, end) -> None:
         ((174, 92), (174, 205)),  # sliding door, kitchen to living room
         ((236, 316), (236, 371)),  # sliding door, washroom to bedroom
         ((408, 203), (445, 203)),  # door leaf drawn as a thin rectangle
+        ((494, 221), (494, 251)),  # bathroom door, once its window seals the outline
     ],
 )
 def test_colored_home_inner_glazing_is_door(colored_home: Layout, start, end) -> None:
