@@ -29,10 +29,6 @@ def _images(folder: Path) -> list[Path]:
 
 
 FAIL_IMAGES = _images(LOCAL_FAIL)
-# Failures that the reliability warning already flags.
-WARNED_FAILURES = [
-    LOCAL_FAIL / "modern_house_clean.jpg",  # furniture and tiny door arcs
-]
 # Plans with specific accuracy checks below.
 NAMED = {
     "cafe": FIXTURES / "cafe_plan.png",  # listing-style shop plan
@@ -187,12 +183,7 @@ def test_cad_cafe_gray_glazing_is_window(cad_cafe: Layout, start, end) -> None:
     "start, end",
     [
         ((573, 1104), (701, 1104)),  # double entrance door
-        pytest.param(
-            (132, 338),
-            (132, 402),
-            marks=pytest.mark.xfail(reason="side door is placed across the wall", strict=True),
-            id="side door",
-        ),
+        ((132, 338), (132, 402)),  # side door drawn half open: leaf and a short arc
         ((276, 160), (340, 160)),  # back door with a single threshold line
     ],
 )
@@ -211,17 +202,12 @@ def test_cad_cafe_ignores_equipment_drawing(drafts, cad_cafe: Layout) -> None:
     assert any("not connected" in warning for warning in drafts["cad_cafe"].warnings)
 
 
-# Well-recognized plans get no reliability warning; flagged failures do.
+# Well-recognized plans get no reliability warning.
 
 
 @pytest.mark.parametrize("path", PASS_IMAGES, ids=_image_id)
 def test_passing_plan_has_no_reliability_warning(drafts, path) -> None:
     assert UNSUPPORTED_WARNING not in drafts[path].warnings
-
-
-@pytest.mark.parametrize("path", WARNED_FAILURES, ids=_image_id)
-def test_failing_plan_warns_about_reliability(drafts, path) -> None:
-    assert UNSUPPORTED_WARNING in drafts[path].warnings
 
 
 # Edge cases.
