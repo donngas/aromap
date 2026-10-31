@@ -1,0 +1,37 @@
+server {
+    listen 80;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    client_max_body_size ${FRONTEND_MAX_BODY_SIZE};
+
+    # Docker's DNS: resolve again after backend containers are recreated.
+    resolver 127.0.0.11 valid=10s ipv6=off;
+    set $api_proxy_target "${API_PROXY_TARGET}";
+
+    location ~ ^/api(?:/|$) {
+        # Preserve the full /api path and query string. Never use SPA fallback here.
+        proxy_pass $api_proxy_target$request_uri;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Vite hashes build assets; missing assets must return 404, not index.html.
+    location ^~ /assets/ {
+        try_files $uri =404;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+    }
+
+    location = /index.html {
+        add_header Cache-Control "no-cache" always;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+        add_header Cache-Control "no-cache";
+    }
+}
