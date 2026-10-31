@@ -133,7 +133,6 @@ def cafe(drafts) -> Layout:
     "start, end",
     [
         ((309, 875), (443, 875)),  # double entrance door
-        ((422, 224), (422, 282)),  # kitchen passage
         ((188, 196), (251, 196)),  # left restroom door
         ((347, 196), (404, 196)),  # right restroom door, hinged on a short stub
     ],
@@ -151,8 +150,13 @@ def test_cafe_indoor_domain_is_the_shop_outline(cafe: Layout) -> None:
     assert cafe.indoor_domain.holes == []
 
 
+def test_cafe_kitchen_passage_is_open_floor(cafe: Layout) -> None:
+    # The passage into the kitchen has no door symbol, so it stays open.
+    assert not any(d.start.x > 410 and d.start.x < 435 for d in cafe.doors), cafe.doors
+
+
 def test_cafe_window(cafe: Layout) -> None:
-    assert len(cafe.doors) == 4
+    assert len(cafe.doors) == 3
     assert len(cafe.windows) == 1
     assert _has_opening(cafe.windows, (668, 875), (821, 875))
 

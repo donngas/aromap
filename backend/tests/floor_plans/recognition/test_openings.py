@@ -101,6 +101,29 @@ def test_door_frame_beside_arc_joins_door() -> None:
     assert _door_spans(openings) == [(200, 280)]
 
 
+def test_storefront_window_beside_entrance_in_one_gap() -> None:
+    # A storefront wall stops at x=100; the next wall is at x=240. The gap holds a
+    # window (x=100-160) and the entrance door (x=180-240) with no wall between.
+    segments = [
+        WallSegment("horizontal", 100, 0, 100),
+        WallSegment("vertical", 0, 0, 300),
+        WallSegment("vertical", 240, 0, 300),
+    ]
+    lines = _blank()
+    lines[97, 100:161] = 255  # glazing
+    lines[103, 100:161] = 255
+    details = _swing(_blank(), (180, 100), 60, 0, 90)
+
+    _, openings = find_openings(segments, lines, details, thickness=10)
+
+    found = sorted((o.kind, o.span.start, o.span.end) for o in openings)
+    expected = [("door", 180, 240), ("window", 100, 180)]
+    assert [kind for kind, *_ in found] == [kind for kind, *_ in expected]
+    assert all(
+        abs(a - b) <= 2 for (_, *got), (_, *want) in zip(found, expected) for a, b in zip(got, want)
+    )
+
+
 def test_round_table_in_gap_is_not_a_door() -> None:
     segments = [
         WallSegment("horizontal", 100, 0, 200),
@@ -130,8 +153,9 @@ def test_passage_between_two_room_corners_stays_open() -> None:
     assert openings == []
 
 
-def test_gap_between_corners_turning_apart_is_a_doorway() -> None:
-    # One side wall turns up, the other down: a doorway between two rooms.
+def test_gap_without_symbol_stays_open_floor() -> None:
+    # Two wall ends face each other across a door-sized gap with nothing drawn in
+    # it, e.g. an open-plan sales floor: open floor, not a doorway.
     segments = [
         WallSegment("horizontal", 100, 0, 100),
         WallSegment("vertical", 100, 0, 100),
@@ -139,11 +163,10 @@ def test_gap_between_corners_turning_apart_is_a_doorway() -> None:
         WallSegment("vertical", 160, 100, 200),
     ]
 
-    _, openings = find_openings(segments, _blank(), _blank(), thickness=10)
+    walls, openings = find_openings(segments, _blank(), _blank(), thickness=10)
 
-    assert [(o.kind, o.span) for o in openings] == [
-        ("door", WallSegment("horizontal", 100, 100, 160))
-    ]
+    assert openings == []
+    assert sorted(walls, key=repr) == sorted(segments, key=repr)
 
 
 def test_wall_ending_in_open_room_is_not_bridged() -> None:
@@ -210,14 +233,14 @@ def test_wide_gap_without_symbol_is_not_bridged() -> None:
     assert walls == segments
 
 
-def test_single_threshold_line_is_a_door() -> None:
+def test_single_threshold_line_is_not_a_window() -> None:
     segments = [WallSegment("horizontal", 100, 0, 100), WallSegment("horizontal", 100, 160, 300)]
     lines = _blank(200)
     lines[100, 100:161] = 255  # one line across the gap
 
     _, openings = find_openings(segments, lines, _blank(200), thickness=10)
 
-    assert [o.kind for o in openings] == ["door"]
+    assert openings == []  # no arc and no glazing: open floor
 
 
 def test_floor_color_edges_are_not_glazing() -> None:
@@ -229,16 +252,16 @@ def test_floor_color_edges_are_not_glazing() -> None:
 
     _, openings = find_openings(segments, lines, _blank(200), thickness=10)
 
-    assert [o.kind for o in openings] == ["door"]
+    assert openings == []  # no arc and no glazing: open floor
 
 
-def test_filled_gap_is_a_door() -> None:
+def test_filled_gap_is_not_a_window() -> None:
     segments = [WallSegment("horizontal", 100, 0, 100), WallSegment("horizontal", 100, 160, 300)]
     filled = np.full((200, 300), 255, dtype=np.uint8)  # e.g. a floor color
 
     _, openings = find_openings(segments, filled, filled, thickness=10)
 
-    assert [o.kind for o in openings] == ["door"]
+    assert openings == []  # no arc and no glazing: open floor
 
 
 def test_wide_gap_is_not_an_opening() -> None:

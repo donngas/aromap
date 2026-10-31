@@ -12,7 +12,8 @@ def shop_plan() -> np.ndarray:
     """A sales floor and a stockroom in a 600x400 image, mimicking a shop plan.
 
     Wall centerlines: outer rectangle at x=50/550 and y=50/350, and an interior
-    wall at x=300 with a doorway between y=170 and y=230. Walls are 11 px thick.
+    wall at x=300 with a door between y=170 and y=230, drawn as a swing arc into
+    the stockroom (base layout format). Walls are 11 px thick.
     """
     image = np.full((400, 600, 3), 255, dtype=np.uint8)
     cv2.rectangle(image, (55, 55), (295, 345), WOOD_FLOOR, cv2.FILLED)
@@ -27,6 +28,7 @@ def shop_plan() -> np.ndarray:
         ((295, 230), (305, 355)),  # interior, below doorway
     ]:
         cv2.rectangle(image, top_left, bottom_right, WALL_COLOR, cv2.FILLED)
+    cv2.ellipse(image, (300, 170), (60, 60), 0, 0, 90, (0, 0, 0), 1)  # stockroom door swing
 
     # Thin dark details that must not become walls.
     cv2.rectangle(image, (90, 90), (220, 170), (70, 70, 70), 2)  # shelf outline
@@ -52,7 +54,7 @@ def cad_shop_plan() -> np.ndarray:
     """CAD-style shop in an 800x600 image: black 11 px walls on white.
 
     Wall centerlines: outer rectangle at x=60/740 and y=60/540, and an interior
-    wall at x=400 with a plain doorway between y=260 and y=330. The top wall has
+    wall at x=400 with a door (swing arc) between y=260 and y=330. The top wall has
     a window (x=150-250) drawn as two gray glazing lines; the bottom wall has a
     back door (x=500-570) with a single gray threshold line and a gray swing arc.
     A stray dark stub with circles near the right wall mimics an equipment drawing.
@@ -74,6 +76,7 @@ def cad_shop_plan() -> np.ndarray:
     gray = (160, 160, 160)
     cv2.line(image, (150, 57), (250, 57), gray, 1)  # window glazing
     cv2.line(image, (150, 63), (250, 63), gray, 1)
+    _swing(image, (400, 260), 70, 0, 90, (0, 0, 0))  # interior door swing
     cv2.line(image, (500, 540), (570, 540), gray, 1)  # back door threshold
     _swing(image, (500, 540), 70, 270, 360, gray)
     cv2.rectangle(image, (600, 195), (650, 205), WALL_COLOR, cv2.FILLED)  # equipment
