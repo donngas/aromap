@@ -27,6 +27,16 @@ from app.floor_plans.recognition.topology import (
 )
 from app.floor_plans.recognition.walls import WallSegment, detect_walls
 
+# Supported input is a clean digital plan with walls thicker than other lines
+# (see backend README). When at least this fraction of wall-like length is
+# detached clutter, the image is likely unsupported (thin-line, scanned, or
+# decorated plans) and a reliability warning is added.
+UNSUPPORTED_CLUTTER_RATIO = 0.15
+UNSUPPORTED_WARNING = (
+    "This image does not look like a clean digital floor plan with thick walls; "
+    "results may be unreliable. Check the walls or trace them manually."
+)
+
 
 def recognize(image_path: Path) -> RecognitionDraft:
     """Detect walls, doors, and windows in input-image pixel coordinates.
@@ -52,6 +62,9 @@ def recognize(image_path: Path) -> RecognitionDraft:
                 f"Ignored {len(segments) - len(kept)} small wall-like shapes not "
                 "connected to the main walls (e.g. plants or equipment)."
             )
+        total = _length(segments)
+        if total and (total - _length(kept)) / total >= UNSUPPORTED_CLUTTER_RATIO:
+            warnings.append(UNSUPPORTED_WARNING)
         segments = kept
         openings = [o for o in openings if find_parent(o, segments) is not None]
         segments = split_at_junctions(segments)
@@ -96,6 +109,10 @@ def _points(segment: WallSegment, scale: float) -> tuple[PixelPoint, PixelPoint]
     """Endpoints mapped from the standardized image back to input pixels."""
     (x1, y1), (x2, y2) = segment.endpoints
     return PixelPoint(x=x1 / scale, y=y1 / scale), PixelPoint(x=x2 / scale, y=y2 / scale)
+
+
+def _length(segments: list[WallSegment]) -> float:
+    return sum(segment.end - segment.start for segment in segments)
 
 
 def _new_id() -> str:

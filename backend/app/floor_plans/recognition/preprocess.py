@@ -14,6 +14,18 @@ import numpy as np
 MAX_LONG_SIDE_PX = 2000
 # Grayscale level (0-255) at or below which a pixel may belong to a wall.
 DARK_THRESHOLD = 100
+# Levels tried for solid walls, strictest first. The first that yields a plan's
+# worth of walls is used, so black walls keep the strict level while gray walls
+# (light ink, pencil scans) get a looser one.
+DARK_THRESHOLDS = (DARK_THRESHOLD, 120, 140, 160, 180)
+# Long thick strokes must cover at least this fraction of the image to count as
+# a plan's walls; less means stray marks, and the next candidate is tried.
+MIN_WALL_COVERAGE = 0.005
+# Strokes at least this many times the wall thickness long count toward coverage.
+WALL_COVERAGE_LENGTH_RATIO = 3
+# Solid walls are at least this thick (px); thinner dark strokes mean the plan
+# is a line drawing and is read in that mode instead.
+MIN_SOLID_WALL_THICKNESS_PX = 4
 # Detail strokes (glazing lines, door arcs) are pixels at least DETAIL_CONTRAST
 # gray levels darker than the mean of their DETAIL_BLOCK_PX neighborhood.
 DETAIL_BLOCK_PX = 25
@@ -130,23 +142,52 @@ def estimate_wall_thickness(mask: np.ndarray) -> int | None:
 def wall_mask(image: np.ndarray) -> tuple[np.ndarray, int | None]:
     """Return a mask of wall-like strokes and the estimated wall thickness.
 
-    Plans with solid walls are read from their dark strokes. Without any, the
-    plan is treated as a line drawing: lines of any shade are kept and hollow
-    walls are filled. The mask is empty and the thickness is None when neither
-    yields thick strokes.
+    Solid walls are read from dark strokes, loosening the darkness level until
+    long thick strokes cover enough of the image. If none does, the plan is read
+    as a line drawing: lines of any shade are kept and hollow walls are filled.
+    When no candidate is convincing, the one with the most wall coverage is
+    returned. The mask is empty and the thickness is None without thick strokes.
     """
-    mask = dark_mask(image)
-    thickness = estimate_wall_thickness(mask)
-    if thickness is None:
-        mask = fill_hollow_walls(line_mask(image))
-        thickness = estimate_wall_thickness(mask)
-    if thickness is None:
-        return np.zeros_like(mask), None
+    best_mask, best_thickness, best_coverage = np.zeros(image.shape[:2], np.uint8), None, 0.0
+    for candidate, min_thickness in _wall_candidates(image):
+        thickness = estimate_wall_thickness(candidate)
+        if thickness is None or thickness < min_thickness:
+            continue
+        walls = _thick_strokes(candidate, thickness)
+        coverage = _wall_coverage(walls, thickness)
+        if coverage >= MIN_WALL_COVERAGE:
+            return walls, thickness
+        if best_thickness is None or coverage > best_coverage:
+            best_mask, best_thickness, best_coverage = walls, thickness, coverage
+    return best_mask, best_thickness
+
+
+def _wall_candidates(image: np.ndarray):
+    """Raw stroke masks to try with their minimum wall thickness, from black solid
+    walls to hollow line drawings."""
+    for level in DARK_THRESHOLDS:
+        yield dark_mask(image, level), MIN_SOLID_WALL_THICKNESS_PX
+    yield fill_hollow_walls(line_mask(image)), MIN_WALL_THICKNESS_PX
+
+
+def _thick_strokes(mask: np.ndarray, thickness: int) -> np.ndarray:
     # Odd sizes keep the kernel centered; even ones shift the opened mask by 1 px.
     size = max(MIN_WALL_THICKNESS_PX, round(thickness * MIN_THICKNESS_RATIO)) | 1
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (size, size))
     walls = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-    return _remove_small_components(walls, min_area=2 * thickness**2), thickness
+    return _remove_small_components(walls, min_area=2 * thickness**2)
+
+
+def _wall_coverage(walls: np.ndarray, thickness: int) -> float:
+    """Fraction of the image covered by long horizontal or vertical thick strokes."""
+    length = (WALL_COVERAGE_LENGTH_RATIO * thickness) | 1
+    horizontal = cv2.morphologyEx(
+        walls, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (length, 1))
+    )
+    vertical = cv2.morphologyEx(
+        walls, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (1, length))
+    )
+    return np.count_nonzero(horizontal | vertical) / walls.size
 
 
 def _remove_small_components(mask: np.ndarray, min_area: int) -> np.ndarray:

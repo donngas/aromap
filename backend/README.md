@@ -259,6 +259,23 @@ walls (solid or hollow line-drawn) and identifies doors and windows from wall ga
 swing arcs, and glazing lines. Other providers should live in sibling modules
 behind the same entry point.
 
+### Supported input images
+
+Recognition targets **clean digital floor plans**. Show this guidance at upload;
+other images still return a draft, but expect to correct or trace it manually.
+
+| Supported | Not supported (unreliable) |
+| --- | --- |
+| Computer-drawn or exported plan, top-down | Photos, scans, hand or pencil drawings |
+| Walls clearly thicker than other lines (solid black/gray, or two lines with a gap) | Walls as thin as shelves, furniture, or text |
+| Horizontal and vertical walls | Diagonal or curved walls |
+| Light background; plain floor colors are fine | Landscaping, 3D renders, heavy decoration or hatching |
+| Doors as gaps with a swing arc; windows as gaps with 2+ thin parallel lines | Busy CAD sheets with many dimensions and title blocks |
+| Roughly 500–2000 px, with the plan filling most of the image | Angled photos (perspective distortion) |
+
+When a plan looks unsupported (much of its wall-like content is detached
+clutter), the draft includes a warning that results may be unreliable.
+
 - Caller supplies an absolute path to a prepared image, retains it throughout the
   call, and owns storage/cleanup. Recognition must not modify/delete the original.
 - Recognizer generates layout/geometry IDs and returns revision `1`, matching image

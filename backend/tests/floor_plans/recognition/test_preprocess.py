@@ -130,3 +130,25 @@ def test_wall_mask_reads_hollow_line_drawings() -> None:
 
     assert thickness is not None and 6 <= thickness <= 10
     assert mask[103, 300] == 255
+
+
+def test_wall_mask_reads_gray_solid_walls() -> None:
+    image = np.full((400, 400, 3), 255, dtype=np.uint8)
+    cv2.rectangle(image, (50, 50), (350, 350), (130, 130, 130), 8)  # gray, not dark
+
+    mask, thickness = wall_mask(image)
+
+    assert thickness is not None and 6 <= thickness <= 10
+    assert mask[50, 200] == 255
+
+
+def test_wall_mask_ignores_stray_dark_marks_in_line_drawings(
+    hollow_line_plan: np.ndarray,
+) -> None:
+    for x in (120, 200, 300):  # a few small dark blobs, e.g. scan specks or symbols
+        cv2.circle(hollow_line_plan, (x, 380), 3, (0, 0, 0), cv2.FILLED)
+
+    mask, thickness = wall_mask(hollow_line_plan)
+
+    assert thickness is not None and thickness >= 6  # hollow walls, not the specks
+    assert mask[53, 250] == 255

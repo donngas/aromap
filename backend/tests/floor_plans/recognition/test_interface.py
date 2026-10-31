@@ -6,19 +6,47 @@ import pytest
 
 from app.floor_plans.models import Layout, PixelPoint, RecognitionDraft, Wall
 from app.floor_plans.recognition.interface import RecognitionError, recognize_floor_plan
+from app.floor_plans.recognition.pipeline import UNSUPPORTED_WARNING
 
 FIXTURES = Path(__file__).parent / "fixtures"
-# Images in fixtures/local are git-ignored (unclear redistribution rights);
-# their tests are skipped when the files are absent.
-LOCAL = FIXTURES / "local"
-PLANS = {
-    "cafe": (FIXTURES / "cafe_plan.png", (1024, 1024)),  # listing-style shop plan
-    "cad_cafe": (LOCAL / "cad_cafe_plan.png", (1179, 1217)),  # CAD drawing
-    "house": (LOCAL / "house_plan.png", (1294, 2000)),  # colored, with landscaping
-    "colored_home": (LOCAL / "colored_home_plan.png", (650, 459)),  # colored, dimensioned
-    "line_home": (LOCAL / "line_home_plan.png", (399, 501)),  # hollow line-art walls
+# Images in fixtures/local are git-ignored (unclear or unrecorded redistribution
+# rights; see local/SOURCES.md). Their tests are skipped when the files are absent.
+# local/pass holds plans recognized well; local/fail holds plans with poor results.
+LOCAL_PASS = FIXTURES / "local" / "pass"
+LOCAL_FAIL = FIXTURES / "local" / "fail"
+
+
+def _images(folder: Path) -> list[Path]:
+    return sorted(p for p in folder.glob("*") if p.suffix.lower() in {".png", ".jpg", ".jpeg"})
+
+
+PASS_IMAGES = [FIXTURES / "cafe_plan.png", *_images(LOCAL_PASS)]
+FAIL_IMAGES = _images(LOCAL_FAIL)
+# Failures that the reliability warning already flags.
+WARNED_FAILURES = [
+    LOCAL_FAIL / name
+    for name in (
+        "house_plan.png",  # landscaping, decorations
+        "convenience_store_plan.png",  # walls as thin as shelves
+        "boutique_plan.png",  # pencil scan
+        "wanamaker_building.png",  # pier-and-window walls
+        "sofa_store_thin.jpg",  # thin single lines
+        "train_station_thin.jpg",  # thin single lines
+    )
+]
+# Plans with specific accuracy checks below.
+NAMED = {
+    "cafe": FIXTURES / "cafe_plan.png",  # listing-style shop plan
+    "cad_cafe": LOCAL_PASS / "cad_cafe_plan.png",  # CAD drawing
+    "colored_home": LOCAL_PASS / "colored_home_plan.png",  # colored, dimensioned
+    "line_home": LOCAL_PASS / "line_home_plan.png",  # hollow line-art walls
+    "warehouse": LOCAL_PASS / "warehouse_plan.png",  # gray solid walls
 }
 TOLERANCE_PX = 3
+
+
+def _image_id(path: Path) -> str:
+    return f"{path.parent.name}/{path.name}"
 
 
 def _near(point: PixelPoint, x: float, y: float, tolerance: float = TOLERANCE_PX) -> bool:
@@ -41,48 +69,52 @@ def _contains(wall: Wall, point: PixelPoint, strictly: bool = False) -> bool:
 
 
 class _Drafts(dict):
-    """Recognizes each fixture once on first use, skipping missing local images."""
+    """Recognizes each image once on first use, skipping missing local images.
 
-    def __missing__(self, name: str) -> RecognitionDraft:
-        path = PLANS[name][0]
+    Keys are image paths or names from NAMED.
+    """
+
+    def __missing__(self, key: str | Path) -> RecognitionDraft:
+        path = NAMED.get(key, key) if isinstance(key, str) else key
         if not path.exists():
             pytest.skip(f"local fixture not present: {path.name}")
-        self[name] = recognize_floor_plan(path)
-        return self[name]
+        self[key] = recognize_floor_plan(path)
+        return self[key]
 
 
 @pytest.fixture(scope="module")
-def drafts() -> dict[str, RecognitionDraft]:
+def drafts() -> dict[str | Path, RecognitionDraft]:
     return _Drafts()
 
 
-# Contract checks shared by every fixture.
+# Contract checks shared by every image, whether recognized well or not.
 
 
-@pytest.mark.parametrize("name", PLANS)
-def test_draft_follows_contract(drafts, name) -> None:
-    layout = drafts[name].floor_plan.layout
-    assert (layout.width_px, layout.height_px) == PLANS[name][1]
+@pytest.mark.parametrize("path", PASS_IMAGES + FAIL_IMAGES, ids=_image_id)
+def test_draft_follows_contract(drafts, path) -> None:
+    layout = drafts[path].floor_plan.layout
+    height, width = cv2.imdecode(np.fromfile(path, np.uint8), cv2.IMREAD_COLOR).shape[:2]
+    assert (layout.width_px, layout.height_px) == (width, height)
     assert layout.revision == 1
     assert layout.calibration is None
-    assert drafts[name].floor_plan.reference_image is None
+    assert drafts[path].floor_plan.reference_image is None
     assert len({w.id for w in layout.walls}) == len(layout.walls)
     opening_ids = [o.id for o in layout.doors + layout.windows]
     assert len(set(opening_ids)) == len(opening_ids)
 
 
-@pytest.mark.parametrize("name", PLANS)
-def test_openings_lie_on_their_wall(drafts, name) -> None:
-    layout = drafts[name].floor_plan.layout
+@pytest.mark.parametrize("path", PASS_IMAGES + FAIL_IMAGES, ids=_image_id)
+def test_openings_lie_on_their_wall(drafts, path) -> None:
+    layout = drafts[path].floor_plan.layout
     walls = {w.id: w for w in layout.walls}
     for opening in layout.doors + layout.windows:
         wall = walls[opening.wall_id]
         assert _contains(wall, opening.start) and _contains(wall, opening.end)
 
 
-@pytest.mark.parametrize("name", PLANS)
-def test_walls_are_split_at_junctions(drafts, name) -> None:
-    layout = drafts[name].floor_plan.layout
+@pytest.mark.parametrize("path", PASS_IMAGES + FAIL_IMAGES, ids=_image_id)
+def test_walls_are_split_at_junctions(drafts, path) -> None:
+    layout = drafts[path].floor_plan.layout
     endpoints = [p for w in layout.walls for p in (w.start, w.end)]
     for wall in layout.walls:
         assert not any(_contains(wall, p, strictly=True) for p in endpoints), wall
@@ -161,14 +193,17 @@ def test_cad_cafe_ignores_equipment_drawing(drafts, cad_cafe: Layout) -> None:
     assert any("not connected" in warning for warning in drafts["cad_cafe"].warnings)
 
 
-# Colored house plan with landscaping: a stress test outside the shop target.
+# Well-recognized plans get no reliability warning; flagged failures do.
 
 
-def test_house_ignores_detached_plants(drafts) -> None:
-    layout = drafts["house"].floor_plan.layout
-    bush = [p for w in layout.walls for p in (w.start, w.end) if p.x > 1120 and p.y > 1250]
-    assert bush == []
-    assert any(_near(w.start, 260, 517, tolerance=5) for w in layout.walls)  # building corner
+@pytest.mark.parametrize("path", PASS_IMAGES, ids=_image_id)
+def test_passing_plan_has_no_reliability_warning(drafts, path) -> None:
+    assert UNSUPPORTED_WARNING not in drafts[path].warnings
+
+
+@pytest.mark.parametrize("path", WARNED_FAILURES, ids=_image_id)
+def test_failing_plan_warns_about_reliability(drafts, path) -> None:
+    assert UNSUPPORTED_WARNING in drafts[path].warnings
 
 
 # Edge cases.
@@ -256,7 +291,9 @@ def test_line_home_hollow_walls_are_detected(drafts) -> None:
 def _recognize(image: np.ndarray, tmp_path: Path) -> RecognitionDraft:
     path = tmp_path / "plan.png"
     cv2.imwrite(str(path), image)
-    return recognize_floor_plan(path)
+    draft = recognize_floor_plan(path)
+    assert UNSUPPORTED_WARNING not in draft.warnings  # synthetic plans are supported styles
+    return draft
 
 
 def test_synthetic_cad_style(tmp_path: Path, cad_shop_plan: np.ndarray) -> None:
@@ -288,3 +325,12 @@ def test_synthetic_hollow_line_drawing(tmp_path: Path, hollow_line_plan: np.ndar
     assert _has_opening(layout.doors, (250, 200), (250, 260), tolerance=4)
     outer = [w for w in layout.walls if w.start.x == w.end.x and abs(w.start.x - 53) <= 3]
     assert sum(abs(w.end.y - w.start.y) for w in outer) > 350
+
+
+# Gray solid walls.
+
+
+def test_warehouse_gray_outer_walls(drafts) -> None:
+    layout = drafts["warehouse"].floor_plan.layout
+    for corner in [(115, 61), (345, 61), (115, 245), (345, 245)]:
+        assert any(_near(p, *corner, tolerance=5) for w in layout.walls for p in (w.start, w.end))
