@@ -28,20 +28,10 @@ def simulation_status(job_id: str):
 
 
 @router.get("/{job_id}/fields", response_class=Response, responses={
-    200: {"description": "Concentration artifact; encoding is specified in result.fields.encoding.",
+    200: {"description": "Concentration and active-domain mask bundle; see result.fields.encoding.",
           "content": {"application/octet-stream": {"schema": {"type": "string", "format": "binary"}}}},
     404: {"model": ErrorResponse},
 })
 def simulation_fields(job_id: str):
-    """Future array download with logical axes [time, channel, row, column]."""
+    """Future single download: concentration [T,P,H,W] and active_domain_mask [H,W]."""
     raise api_error(404, "result_not_found", "Simulation fields are unknown or expired.")
-
-
-@router.get("/{job_id}/mask", response_class=Response, responses={
-    200: {"description": "Active-domain mask artifact; encoding is specified in result metadata.",
-          "content": {"application/octet-stream": {"schema": {"type": "string", "format": "binary"}}}},
-    404: {"model": ErrorResponse},
-})
-def simulation_mask(job_id: str):
-    """Future shared mask download; true means usable indoor space."""
-    raise api_error(404, "result_not_found", "Simulation mask is unknown or expired.")

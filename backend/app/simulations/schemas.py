@@ -39,23 +39,24 @@ class PlacementChannel(ContractModel):
     definition_id: str = Field(min_length=1)
 
 
+class ActiveDomainMask(ContractModel):
+    """Mask inside the fields bundle; true means usable indoor space."""
+
+    axes: tuple[Literal["row"], Literal["column"]] = ("row", "column")
+    shape: tuple[PositiveInt, PositiveInt]
+
+
 class ConcentrationFields(ContractModel):
+    """One download containing concentration and active_domain_mask arrays."""
+
     url: str = Field(min_length=1)
-    encoding: str = Field(min_length=1, description="Artifact encoding, to be selected with the engine")
+    encoding: str = Field(min_length=1, description="Bundle encoding, to be selected with the engine")
     axes: tuple[Literal["time"], Literal["channel"], Literal["row"], Literal["column"]] = (
         "time", "channel", "row", "column",
     )
     shape: tuple[PositiveInt, PositiveInt, PositiveInt, PositiveInt]
     units: Literal["relative_units_per_m2"] = "relative_units_per_m2"
-
-
-class ActiveDomainMask(ContractModel):
-    """True cells are inside usable domain; shared across times and channels."""
-
-    url: str = Field(min_length=1)
-    encoding: str = Field(min_length=1)
-    axes: tuple[Literal["row"], Literal["column"]] = ("row", "column")
-    shape: tuple[PositiveInt, PositiveInt]
+    active_domain_mask: ActiveDomainMask
 
 
 class SimulationResult(ContractModel):
@@ -66,7 +67,6 @@ class SimulationResult(ContractModel):
     channels: list[PlacementChannel] = Field(min_length=1)
     sample_times_s: list[float] = Field(min_length=1)
     fields: ConcentrationFields
-    active_domain_mask: ActiveDomainMask
     resolved_assumptions: list[str]
     diagnostics: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
@@ -77,7 +77,7 @@ class SimulationResult(ContractModel):
         expected = (len(self.sample_times_s), len(self.channels), self.grid.rows, self.grid.columns)
         if self.fields.shape != expected:
             raise ValueError("Field shape must match times, channels, and grid")
-        if self.active_domain_mask.shape != (self.grid.rows, self.grid.columns):
+        if self.fields.active_domain_mask.shape != (self.grid.rows, self.grid.columns):
             raise ValueError("Mask shape must match grid")
         if any(t < 0 for t in self.sample_times_s) or any(
             b <= a for a, b in zip(self.sample_times_s, self.sample_times_s[1:])

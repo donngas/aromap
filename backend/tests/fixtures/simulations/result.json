@@ -22,13 +22,11 @@
     "encoding": "example-only-not-selected",
     "axes": ["time", "channel", "row", "column"],
     "shape": [11, 3, 16, 24],
-    "units": "relative_units_per_m2"
-  },
-  "active_domain_mask": {
-    "url": "/api/simulations/example-run/mask",
-    "encoding": "example-only-not-selected",
-    "axes": ["row", "column"],
-    "shape": [16, 24]
+    "units": "relative_units_per_m2",
+    "active_domain_mask": {
+      "axes": ["row", "column"],
+      "shape": [16, 24]
+    }
   },
   "resolved_assumptions": ["Schema example only; no numerical model or emission conversion has been executed."],
   "diagnostics": [],
