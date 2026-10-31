@@ -54,29 +54,28 @@ Use the same `-p` and `-f` arguments for staging `down`, `logs`, etc. Without `-
 `down` retains SQLite/images/results; adding `-v` deletes that stack's volume.
 To run just the backend, append `backend` to the appropriate `up` command.
 
-Frontend Docker targets are minimal templates for the FE lead. They require npm
-manifests, a `dev` script accepting `--host`/`--port`, and a `build` script producing
-`dist/`. If frontend application files are absent, run the backend alone until
-the FE lead's work is integrated. The staging template serves `/`
-and static assets only: SPA fallback and API proxy/configuration remain with the
-FE lead. No frontend application/configuration files are changed by this setup.
+Frontend development runs Vite on container port 5173; staging builds `dist/`
+and serves it through Nginx on container port 80. Both forward relative `/api/...`
+requests to `API_PROXY_TARGET` (default `http://backend:8000`), preserving the full
+path and query string. Use an origin without a path or trailing slash. The browser
+needs no backend URL or build-time API configuration. Staging reads proxy settings
+at container startup; recreate the frontend container after changing them.
 
-The agreed routing contract is browser calls to relative `/api/...` paths. The
-FE lead must proxy those paths in Vite for development and Nginx for staging,
-preserving the `/api` prefix. Compose now supplies `API_PROXY_TARGET` (default
-`http://backend:8000`) to the frontend development service. This variable alone
-does not enable a proxy and is not a browser URL; Nginx needs separate configuration.
-Until the FE proxy work is implemented, browser clients must explicitly use the
-backend's published URL. No frontend-owned files are changed here.
+Nginx uses Docker DNS to resolve the backend again after container recreation.
+It provides SPA fallback, caches hashed `/assets/` files, and serves `index.html`
+with revalidation. API requests and missing build assets never use SPA fallback.
 
-For Vite running outside Docker, set its proxy target to the published backend
-address (for example `http://localhost:8000`). The FE lead owns loading that setting
-in Vite; the root `.env` is read by Compose, not automatically by host-run Vite.
-
+For Vite running outside Docker, set `API_PROXY_TARGET` to the published backend
+address (for example `API_PROXY_TARGET=http://127.0.0.1:8000 npm run dev` inside
+`frontend/`). Vite also reads `frontend/.env`; the root `.env` is read by Compose.
 Changing `BACKEND_PORT` changes host access only; Docker proxies continue using
-`backend:8000`. Both serving modes must permit upload requests of at least
-`AROMAP_MAX_UPLOAD_BYTES + 1 MiB` including multipart overhead (12 MiB is sufficient
-for the default limit). Nginx also needs SPA fallback for frontend routes.
+`backend:8000`.
+
+Staging Nginx limits complete request bodies to `FRONTEND_MAX_BODY_SIZE` (default
+`12m`), allowing multipart overhead above the default 10 MiB backend image limit.
+If increasing `AROMAP_MAX_UPLOAD_BYTES`, increase the Nginx limit to at least that
+value plus 1 MiB. Vite has no corresponding body-size cap; the backend enforces its
+image limit in both modes.
 
 Compose automatically allows localhost/127.0.0.1 frontend origins at `FRONTEND_PORT`
 unless `AROMAP_CORS_ORIGINS` is explicitly set. This is for direct cross-origin API
