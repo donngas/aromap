@@ -13,20 +13,28 @@ from app.floor_plans.recognition.doors import find_door_arcs, swing_spans
 from app.floor_plans.recognition.walls import TOUCH_TOLERANCE_PX, WallSegment
 
 # Opening widths as multiples of the wall thickness: roughly 0.6-3 m for
-# 0.2 m walls, covering single doors up to wide shop entrances. A gap of this
-# size between two aligned wall pieces is bridged even without a door or window
-# symbol.
+# 0.2 m walls, covering single doors up to wide shop entrances. Only gaps with a
+# door arc or window glazing are bridged (base layout format); a gap without a
+# symbol is open floor, e.g. an open-plan sales floor or a passage.
 MIN_OPENING_RATIO = 3
 MAX_OPENING_RATIO = 15
 # Plans with thin-drawn walls make real openings look too wide relative to the
 # wall, so gaps up to this fraction of the image's long side are also bridged,
 # but only when a door arc or window glazing confirms them.
 MAX_OPENING_IMAGE_RATIO = 0.25
+# Windows may be whole glass walls, so gaps up to this fraction of the image's
+# long side are bridged when glazing runs along them; doors keep the limit above.
+MAX_WINDOW_IMAGE_RATIO = 0.5
 # A line along the gap counts as window glazing when this fraction of it is dark.
 GLAZING_LINE_COVERAGE = 0.6
 # Windows are drawn with at least this many separate parallel lines; a single
 # line across a gap is usually a door threshold.
 MIN_GLAZING_LINES = 2
+# Glazing is looked for within these multiples of the wall thickness on each side
+# of the wall line: first the wall itself, then a little wider for window frames
+# drawn wider than the wall. The tight band comes first because on thin walls the
+# wider one reaches floor-color edges.
+GLAZING_BAND_RATIOS = (0.5, 0.75)
 # Glazing is a few thin lines; if more of the band than this is covered, it is a
 # filled area (e.g. a floor color) rather than a window.
 MAX_GLAZING_LINE_FRACTION = 0.7
@@ -53,19 +61,18 @@ def find_openings(
     """Bridge door/window-sized gaps and return the bridged walls with openings.
 
     Gaps are found between collinear wall pieces and between a free wall end and
-    the next perpendicular wall. A wall end often just stops in an open room, so
-    those gaps, like unusually wide ones, need a door arc or window glazing to be
-    bridged. Isolated segments are bridged only when both ends reach walls, so
-    stray equipment or fixture drawings stay detached and can be dropped later.
+    the next perpendicular wall. Every gap needs a door arc or window glazing to be
+    bridged; a gap without a symbol stays open floor. Isolated segments are
+    bridged only when both ends reach walls, so stray equipment or fixture
+    drawings stay detached and can be dropped later.
     ``lines`` (dark lines of any shade) reveals glazing and door arcs; ``details``
     (strokes in any color) also reveals colored door arcs. ``wall_pixels`` (the
     wall mask), when given, keeps wall edges from being read as arcs.
     """
     symbols = _Symbols(lines, details, thickness, wall_pixels)
     min_gap = MIN_OPENING_RATIO * thickness
-    plain_gap = MAX_OPENING_RATIO * thickness
-    max_gap = max(plain_gap, MAX_OPENING_IMAGE_RATIO * max(lines.shape))
-    walls, openings = _bridge_collinear_gaps(segments, min_gap, plain_gap, max_gap, symbols)
+    max_gap = max(symbols.max_door_gap, MAX_WINDOW_IMAGE_RATIO * max(lines.shape))
+    walls, openings = _bridge_collinear_gaps(segments, min_gap, max_gap, symbols)
     walls, end_openings = _bridge_gaps_to_walls(walls, min_gap, max_gap, symbols)
     return walls, openings + end_openings
 
@@ -82,6 +89,10 @@ class _Symbols:
     ) -> None:
         self.lines = lines
         self.thickness = thickness
+        self.min_gap = MIN_OPENING_RATIO * thickness
+        self.max_door_gap = max(
+            MAX_OPENING_RATIO * thickness, MAX_OPENING_IMAGE_RATIO * max(lines.shape)
+        )
         # Dark arcs are thin in ``lines``; colored arcs only show in ``details``.
         max_radius = MAX_OPENING_IMAGE_RATIO * max(lines.shape)
         self.arcs = [
@@ -89,14 +100,17 @@ class _Symbols:
             *find_door_arcs(details, wall_pixels, thickness, max_radius),
         ]
 
-    def find(self, gap: WallSegment) -> Opening | None:
-        """Door for a swing arc, window for glazing lines, None for no symbol.
+    def find(self, gap: WallSegment) -> list[Opening]:
+        """Openings in the gap: doors for swing arcs, windows for glazing lines.
 
         A door covers what its arcs swing across (two arcs for a double door). A
         leftover under one wall thickness at a gap end is a door frame and joins the
-        door; a longer one, e.g. a wall stub beside the hinge, stays wall.
+        door; a longer one is checked for glazing (e.g. a storefront window beside
+        the entrance) and otherwise stays wall. Gaps too wide for a door can only
+        be windows (glass walls). An empty list means no symbol.
         """
-        spans = swing_spans(self.arcs, gap, self.thickness)
+        door_sized = gap.end - gap.start <= self.max_door_gap
+        spans = swing_spans(self.arcs, gap, self.thickness) if door_sized else []
         if spans:
             start = min(s for s, _ in spans)
             end = max(e for _, e in spans)
@@ -104,16 +118,21 @@ class _Symbols:
                 start = gap.start
             if gap.end - end <= self.thickness:
                 end = gap.end
-            return Opening("door", replace(gap, start=start, end=end))
+            found = [Opening("door", replace(gap, start=start, end=end))]
+            for side in (replace(gap, end=start), replace(gap, start=end)):
+                if side.end - side.start >= self.min_gap and _has_glazing(
+                    self.lines, side, self.thickness
+                ):
+                    found.append(Opening("window", side))
+            return found
         if _has_glazing(self.lines, gap, self.thickness):
-            return Opening("window", gap)
-        return None
+            return [Opening("window", gap)]
+        return []
 
 
 def _bridge_collinear_gaps(
     segments: list[WallSegment],
     min_gap: float,
-    plain_gap: float,
     max_gap: float,
     symbols: _Symbols,
 ) -> tuple[list[WallSegment], list[Opening]]:
@@ -124,23 +143,13 @@ def _bridge_collinear_gaps(
     walls, openings = [], []
     for line in lines.values():
         line.sort(key=lambda s: s.start)
-        perpendicular = [s for s in segments if s.orientation != line[0].orientation]
         current = line[0]
         for segment in line[1:]:
             width = segment.start - current.end
             gap = replace(current, start=current.end, end=segment.start)
-            opening = symbols.find(gap) if min_gap <= width <= max_gap else None
-            # A plain gap between aligned walls is a doorway, unless both sides are
-            # corners turning the same way: then two rooms just line up, with open
-            # floor (e.g. a passage to a stockroom) between them.
-            turn = _corner_turn(gap.start, gap.offset, perpendicular, min_gap)
-            open_floor = turn != 0 and turn == _corner_turn(
-                gap.end, gap.offset, perpendicular, min_gap
-            )
-            if opening is None and not open_floor and min_gap <= width <= plain_gap:
-                opening = Opening("door", gap)
-            if opening is not None:
-                openings.append(opening)
+            found = symbols.find(gap) if min_gap <= width <= max_gap else []
+            if found:
+                openings.extend(found)
                 current = replace(current, end=segment.end)
             else:
                 walls.append(current)
@@ -158,7 +167,7 @@ def _bridge_gaps_to_walls(
         collinear = [
             s for s in segments if s is not segment and s.orientation == segment.orientation
         ]
-        bridged, segment_openings = segment, []
+        bridged, segment_openings, bridged_ends = segment, [], 0
         for side, direction in (("start", -1), ("end", 1)):
             value = getattr(segment, side)
             if _touches(value, segment.offset, perpendicular):
@@ -169,15 +178,16 @@ def _bridge_gaps_to_walls(
             gap = replace(segment, start=min(value, target), end=max(value, target))
             if any(_overlaps(gap, other) for other in collinear):
                 continue
-            opening = symbols.find(gap)
-            if opening is None:
+            found = symbols.find(gap)
+            if not found:
                 continue
-            segment_openings.append(opening)
+            segment_openings.extend(found)
             bridged = replace(bridged, **{side: target})
+            bridged_ends += 1
         # An isolated piece is a wall between two openings only if both ends reach
         # walls; bridging just one end would attach stray drawings such as equipment.
         isolated = not any(segment.touches(other) for other in segments if other is not segment)
-        if isolated and len(segment_openings) < 2:
+        if isolated and bridged_ends < 2:
             walls.append(segment)
             continue
         walls.append(bridged)
@@ -190,24 +200,6 @@ def _touches(value: float, offset: float, perpendicular: list[WallSegment]) -> b
         abs(other.offset - value) <= TOUCH_TOLERANCE_PX and other.start <= offset <= other.end
         for other in perpendicular
     )
-
-
-def _corner_turn(
-    value: float, offset: float, perpendicular: list[WallSegment], min_length: float
-) -> int:
-    """Direction (+1/-1) a full-length wall turns at this wall end, or 0 if none.
-
-    Only an L-corner counts: the perpendicular wall must end at this wall line.
-    Walls passing through (T-junctions) and short pieces such as door frames do not.
-    """
-    for other in perpendicular:
-        if abs(other.offset - value) > TOUCH_TOLERANCE_PX or other.end - other.start < min_length:
-            continue
-        if abs(other.start - offset) <= min_length / MIN_OPENING_RATIO:
-            return 1
-        if abs(other.end - offset) <= min_length / MIN_OPENING_RATIO:
-            return -1
-    return 0
 
 
 def _nearest_crossing(
@@ -229,9 +221,12 @@ def _overlaps(gap: WallSegment, other: WallSegment) -> bool:
     )
 
 
-def _wall_band(lines: np.ndarray, segment: WallSegment, thickness: int) -> np.ndarray:
-    """Pixels within the wall's thickness along the segment, one column per step."""
-    half = thickness / 2 + 1
+def _wall_band(
+    lines: np.ndarray, segment: WallSegment, thickness: int, ratio: float = 0.5
+) -> np.ndarray:
+    """Pixels within ``ratio`` x thickness of the wall line along the segment, one
+    column per step."""
+    half = ratio * thickness + 1
     across = slice(max(0, round(segment.offset - half)), round(segment.offset + half) + 1)
     along = slice(int(segment.start) + 1, int(segment.end))
     if segment.orientation == "horizontal":
@@ -240,9 +235,15 @@ def _wall_band(lines: np.ndarray, segment: WallSegment, thickness: int) -> np.nd
 
 
 def _has_glazing(lines: np.ndarray, gap: WallSegment, thickness: int) -> bool:
-    # Glazing lies within the wall's own thickness; looking further would pick up
-    # edges of the floor colors on either side.
-    band = _wall_band(lines, gap, thickness)
+    return any(
+        _has_glazing_in_band(_wall_band(lines, gap, thickness, ratio), thickness)
+        for ratio in GLAZING_BAND_RATIOS
+    )
+
+
+def _has_glazing_in_band(band: np.ndarray, thickness: int) -> bool:
+    # Glazing lies within the wall (or its window frame); looking further would
+    # pick up edges of the floor colors on either side.
     if band.size == 0:
         return False
     covered = (band > 0).mean(axis=1) >= GLAZING_LINE_COVERAGE

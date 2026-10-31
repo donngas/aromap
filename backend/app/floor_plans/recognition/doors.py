@@ -25,8 +25,19 @@ MIN_DOOR_RATIO = 2
 # Straight runs at least this long (px, and at least the wall thickness) are
 # door leaves, thresholds, or furniture edges, removed before fitting arcs.
 MIN_STRAIGHT_RUN_PX = 9
-# An arc belongs to a gap when its hinge lies within one wall thickness of the
-# gap's wall line and at least this fraction of its swing lies inside the gap.
+# Dashed arcs (common in CAD exports) break into pieces too small to fit. Only
+# such small pieces are joined across breaks up to this many pixels and fitted
+# again, so plans with solid arcs pay almost nothing for dash support.
+DASH_JOIN_PX = 5
+# A joined group is fitted only if it has at least this many dashes; leftover
+# fragments of grids, text, and furniture rarely line up that often.
+MIN_DASHES = 4
+# An arc belongs to a gap when its hinge lies near the gap's wall line and at
+# least MIN_SWING_IN_GAP of its swing lies in the gap. Hinges sit on the wall face,
+# and hand-drawn or dashed arcs fit a little off, more so for larger arcs: "near"
+# is within this multiple of the wall thickness or fraction of the radius.
+MAX_HINGE_OFFSET_RATIO = 1.5
+MAX_HINGE_OFFSET_RADIUS_RATIO = 0.3
 MIN_SWING_IN_GAP = 0.6
 
 
@@ -51,17 +62,41 @@ def find_door_arcs(
         curves[cv2.dilate(wall_pixels, np.ones((5, 5), np.uint8)) > 0] = 0
     straight = cv2.dilate(_straight_runs(curves, thickness), np.ones((3, 3), np.uint8))
     curves = cv2.subtract(curves, straight)
-    count, labels, stats, _ = cv2.connectedComponentsWithStats(curves, connectivity=8)
     min_radius = MIN_DOOR_RATIO * thickness
-    arcs = []
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(curves, connectivity=8)
+    arcs, small = [], np.zeros_like(curves)
     for label in range(1, count):
         x, y, width, height, _ = stats[label]
+        piece = labels[y : y + height, x : x + width] == label
         if max(width, height) < min_radius / 2:
+            small[y : y + height, x : x + width][piece] = 255  # maybe a dash
             continue
-        ys, xs = np.nonzero(labels[y : y + height, x : x + width] == label)
+        ys, xs = np.nonzero(piece)
         arc = _fit_arc(xs + x, ys + y)
         if arc is not None and min_radius <= arc.radius <= max_radius:
             arcs.append(arc)
+    arcs.extend(_dashed_arcs(small, min_radius, max_radius))
+    return arcs
+
+
+def _dashed_arcs(dashes: np.ndarray, min_radius: float, max_radius: float) -> list[DoorArc]:
+    """Arcs from small pieces joined across short breaks (dashed swing arcs)."""
+    joined = cv2.dilate(dashes, np.ones((DASH_JOIN_PX, DASH_JOIN_PX), np.uint8))
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(joined, connectivity=8)
+    # Count the dashes in each joined group via each dash's centroid.
+    _, _, _, centroids = cv2.connectedComponentsWithStats(dashes, connectivity=8)
+    cx, cy = np.rint(centroids[1:]).astype(int).T
+    dash_counts = np.bincount(labels[cy, cx], minlength=count)
+    arcs = []
+    for label in range(1, count):
+        x, y, width, height, _ = stats[label]
+        if dash_counts[label] < MIN_DASHES or max(width, height) < min_radius / 2:
+            continue
+        group = labels[y : y + height, x : x + width] == label
+        ys, xs = np.nonzero(group & (dashes[y : y + height, x : x + width] > 0))
+        arcs.extend(
+            arc for arc in _fit_arcs(xs + x, ys + y) if min_radius <= arc.radius <= max_radius
+        )
     return arcs
 
 
@@ -75,7 +110,8 @@ def swing_spans(
             offset, hinge, direction = arc.hinge_y, arc.hinge_x, arc.sign_x
         else:
             offset, hinge, direction = arc.hinge_x, arc.hinge_y, arc.sign_y
-        if abs(offset - gap.offset) > thickness or direction == 0:
+        near = max(MAX_HINGE_OFFSET_RATIO * thickness, MAX_HINGE_OFFSET_RADIUS_RATIO * arc.radius)
+        if abs(offset - gap.offset) > near or direction == 0:
             continue
         start, end = sorted((hinge, hinge + direction * arc.radius))
         if min(end, gap.end) - max(start, gap.start) >= MIN_SWING_IN_GAP * (end - start):
@@ -90,6 +126,20 @@ def _straight_runs(mask: np.ndarray, thickness: int) -> np.ndarray:
         for size in ((length, 1), (1, length))
     ]
     return cv2.bitwise_or(*runs)
+
+
+def _fit_arcs(xs: np.ndarray, ys: np.ndarray) -> list[DoorArc]:
+    """One arc for the points, or, failing that, one per half: the two arcs of a
+    double door meet in the middle and form a single group."""
+    arc = _fit_arc(xs, ys)
+    if arc is not None:
+        return [arc]
+    for coords in (xs, ys):
+        middle = (coords.min() + coords.max()) / 2
+        halves = [_fit_arc(xs[part], ys[part]) for part in (coords < middle, coords >= middle)]
+        if all(half is not None for half in halves):
+            return halves
+    return []
 
 
 def _fit_arc(xs: np.ndarray, ys: np.ndarray) -> DoorArc | None:

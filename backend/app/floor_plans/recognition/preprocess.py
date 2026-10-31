@@ -36,8 +36,9 @@ HOLLOW_WALL_HALF_WIDTH_RATIO = 0.01
 # Strokes thinner than this (px) are never treated as walls.
 MIN_WALL_THICKNESS_PX = 3
 # Strokes thinner than this fraction of the estimated wall thickness are removed.
-# Kept low because interior walls are often thinner than exterior walls.
-MIN_THICKNESS_RATIO = 0.4
+# Kept low because interior walls are often thinner than exterior walls (e.g. a
+# stockroom drawn at half the outer wall's width).
+MIN_THICKNESS_RATIO = 0.35
 
 
 class InvalidImageError(ValueError):
@@ -127,8 +128,9 @@ def estimate_wall_thickness(mask: np.ndarray) -> int | None:
     """Estimate the dominant thickness (px) of thick strokes in ``mask``.
 
     Stroke centers are distance-transform ridges whose value is about half the
-    stroke width. Widths are weighted by themselves (roughly by area) so long,
-    thick walls outweigh text and fixture outlines.
+    stroke width. Each width's vote is weighted by the width squared, so a few
+    long thick walls outweigh many bold thin lines (text, table and chair
+    outlines), which can otherwise be far more numerous.
     """
     distance = cv2.distanceTransform(mask, cv2.DIST_L2, 3)
     ridge = (distance > 0) & (distance >= cv2.dilate(distance, np.ones((3, 3), np.uint8)))
@@ -136,7 +138,7 @@ def estimate_wall_thickness(mask: np.ndarray) -> int | None:
     widths = widths[widths >= MIN_WALL_THICKNESS_PX]
     if widths.size == 0:
         return None
-    return int(np.argmax(np.bincount(widths, weights=widths)))
+    return int(np.argmax(np.bincount(widths, weights=widths.astype(float) ** 2)))
 
 
 def wall_mask(image: np.ndarray) -> tuple[np.ndarray, int | None]:
