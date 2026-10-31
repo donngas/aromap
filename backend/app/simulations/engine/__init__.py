@@ -1,1 +1,1 @@
-"""Future grid construction and numerical solver, independent of HTTP and I/O."""
+"""Metric grid preparation and sparse implicit transport; see solver.simulate."""

@@ -1,8 +1,11 @@
 """Metric configuration contracts and provisional resolved solver inputs."""
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.diffusers.models import ConsumerDiffuserDefinition
+from app.simulations.limits import DEFAULT_DURATION_S
 
 
 class ContractModel(BaseModel):
@@ -20,8 +23,8 @@ class IndoorDomain(ContractModel):
     """Metric simulation footprint, not the pixel-domain recognition estimate.
 
     Vertices are in boundary order; closing edges are implicit.
-    Holes exclude outdoor/unusable areas. Polygon topology is checked by future
-    preparation, not inferred from the image rectangle by this contract.
+    Holes exclude outdoor/unusable areas. Preparation validates polygon topology;
+    it does not infer the footprint from the rectangular image extent.
     """
 
     boundary: list[MetricPoint] = Field(
@@ -62,9 +65,14 @@ class DiffuserPlacement(ContractModel):
     placement_id: str = Field(min_length=1)
     definition_id: str = Field(min_length=1)
     position_m: MetricPoint = Field(description="Source placement in meters; not recognition pixels.")
-    strength_override: float | None = Field(default=None, ge=0)
+    strength_override: float | None = Field(
+        default=None, ge=0, description="Explicit dimensionless emission multiplier; defaults to 1. Zero emits nothing.",
+    )
     enabled: bool = True
-    operating_hours_per_day_override: float | None = Field(default=None, gt=0, le=24)
+    operating_hours_per_day_override: float | None = Field(
+        default=None, gt=0, le=24,
+        description="Override lifetime-rated hours/day for estimation, not an on/off schedule. Passive reeds remain continuous.",
+    )
 
 
 class OpeningState(ContractModel):
@@ -75,24 +83,27 @@ class OpeningState(ContractModel):
 
 
 class EnvironmentalConditions(ContractModel):
-    """Omitted values await engine defaults; no scientific defaults chosen here."""
+    """Uniform removal; preparation uses a provisional 0.5 air changes/hour default."""
 
     removal_rate_per_s: float | None = Field(default=None, ge=0)
 
 
 class SimulationSettings(ContractModel):
-    duration_s: float = Field(gt=0)
-    sample_interval_s: float | None = Field(default=None, gt=0)
+    duration_s: float = Field(default=DEFAULT_DURATION_S, gt=0)
+    sample_interval_s: float | None = Field(
+        default=None, gt=0,
+        description="Explicit output interval. Omit both sampling fields for automatic sampling within the sample limit.",
+    )
     sample_times_s: list[float] | None = None
     grid_cell_size_m: float | None = Field(
-        default=None, gt=0, description="Requested cell side length in meters, independent of image resolution.",
+        default=None, gt=0, description="Cell side length in meters; preparation defaults to 0.25 when omitted.",
     )
     effective_diffusivity_m2_per_s: float | None = Field(default=None, gt=0)
 
     @model_validator(mode="after")
-    def sampling_is_explicit(self):
-        if (self.sample_interval_s is None) == (self.sample_times_s is None):
-            raise ValueError("Supply exactly one of sample_interval_s or sample_times_s")
+    def resolve_sampling(self):
+        if self.sample_interval_s is not None and self.sample_times_s is not None:
+            raise ValueError("Supply at most one of sample_interval_s or sample_times_s")
         if self.sample_interval_s is not None and self.sample_interval_s > self.duration_s:
             raise ValueError("Sampling interval must not exceed duration")
         if self.sample_times_s is not None:
@@ -106,18 +117,22 @@ class SimulationSettings(ContractModel):
 class SimulationConfiguration(ContractModel):
     """One submitted configuration, not a saved frontend scenario.
 
-    Geometry and positions are FE-derived meters. Full geometry validation,
-    source estimation, open-window behavior, and engine limits remain future work.
+    Geometry and positions are FE-derived meters. Preparation validates geometry,
+    estimates relative emissions, and resolves provisional spreading/removal defaults.
+    Open-window behavior and the numerical solver remain future work. The HTTP
+    endpoint is still explicitly unavailable.
     """
 
     geometry_m: MetricGeometry = Field(
         description="All geometry coordinates in meters, converted by FE; no image pixels or calibration required.",
     )
     diffuser_definitions: list[ConsumerDiffuserDefinition] = Field(default_factory=list)
-    placements: list[DiffuserPlacement] = Field(min_length=1)
+    placements: list[DiffuserPlacement] = Field(
+        default_factory=list, description="Current placements; empty is meaningful only with a resolved internal initial state.",
+    )
     opening_states: list[OpeningState] = Field(default_factory=list)
     conditions: EnvironmentalConditions = Field(default_factory=EnvironmentalConditions)
-    settings: SimulationSettings
+    settings: SimulationSettings = Field(default_factory=SimulationSettings)
 
     @model_validator(mode="after")
     def references_are_consistent(self):
@@ -141,38 +156,58 @@ class SimulationConfiguration(ContractModel):
         return self
 
 
-class MetricWall(BaseModel):
-    start: MetricPoint = Field(description="Resolved wall start in meters.")
-    end: MetricPoint = Field(description="Resolved wall end in meters.")
+class ResolvedOpening(OpeningGeometry):
+    kind: Literal["door", "window"]
+    is_open: bool
 
 
-class MetricOpening(BaseModel):
-    wall_index: int = Field(ge=0)
-    start: MetricPoint = Field(description="Resolved doorway start in meters.")
-    end: MetricPoint = Field(description="Resolved doorway end in meters.")
+class SimulationGeometry(ContractModel):
+    """Resolved metric geometry; the grid derives its extent from the polygon."""
+
+    indoor_domain: IndoorDomain
+    walls: list[WallGeometry]
+    openings: list[ResolvedOpening]
 
 
-class SimulationGeometry(BaseModel):
-    width_m: float = Field(gt=0, description="Resolved domain width in meters.")
-    height_m: float = Field(gt=0, description="Resolved domain height in meters.")
-    walls: list[MetricWall]
-    open_doorways: list[MetricOpening]
+class ResolvedEmissionProfile(ContractModel):
+    """Explicit rate supplied by a resolver, including all placement overrides.
 
+    One relative unit is a surrogate for 1 mg consumed formulation, not measured
+    fragrance mass or scent perception. Operating schedules remain future work.
+    """
 
-class EmissionSource(BaseModel):
-    placement_id: str
-    position_m: MetricPoint = Field(description="Resolved emission-source position in meters.")
+    kind: Literal["constant"] = "constant"
     rate_relative_units_per_s: float = Field(ge=0)
+    assumptions: list[str] = Field(min_length=1)
 
 
-class SimulationInput(BaseModel):
-    input_fingerprint: str
-    solver_version: str
-    geometry: SimulationGeometry
-    sources: list[EmissionSource]
-    duration_s: float = Field(gt=0)
-    sample_interval_s: float = Field(gt=0)
-    grid_cell_size_m: float = Field(gt=0)
+class EmissionSource(ContractModel):
+    placement_id: str
+    definition_id: str
+    position_m: MetricPoint
+    profile: ResolvedEmissionProfile
+
+
+class ModelParameters(ContractModel):
     effective_diffusivity_m2_per_s: float = Field(gt=0)
     removal_rate_per_s: float = Field(ge=0)
+
+
+class SimulationInput(ContractModel):
+    """Detached resolved snapshot. Contains no client/job IDs or image pixels."""
+
+    input_fingerprint: str
+    model_version: str
+    preparation_version: str
+    geometry: SimulationGeometry
+    sources: list[EmissionSource] = Field(
+        default_factory=list, description="Current emitters; residual-only prepared runs have no emission sources.",
+    )
+    duration_s: float = Field(gt=0)
+    sample_times_s: list[float] = Field(min_length=1)
+    grid_cell_size_m: float = Field(gt=0)
+    parameters: ModelParameters
     assumptions: list[str]
+    initial_state_fingerprint: str | None = Field(
+        default=None, description="Internal resolved initial-state identity; null means zero start. Not a job ID.",
+    )

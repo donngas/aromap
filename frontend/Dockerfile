@@ -1,4 +1,4 @@
-# Minimal templates owned by the FE lead. Keep target names/ports in sync with Compose.
+# Keep target names/ports in sync with Compose.
 FROM node:24-alpine AS dependencies
 
 WORKDIR /app
@@ -15,9 +15,11 @@ FROM dependencies AS build
 COPY . .
 RUN npm run build
 
-# FE lead: complete SPA fallback, API routing, and environment handling as needed.
-# This minimal target serves dist at /; it does not proxy /api to the backend.
 FROM nginx:stable-alpine AS production
+ENV API_PROXY_TARGET=http://backend:8000 \
+    FRONTEND_MAX_BODY_SIZE=12m \
+    NGINX_ENVSUBST_FILTER="^(API_PROXY_TARGET|FRONTEND_MAX_BODY_SIZE)$"
+COPY nginx/default.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]
