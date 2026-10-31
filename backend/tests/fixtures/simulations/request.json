@@ -1,0 +1,26 @@
+{
+  "client_request_id": "frontend-request-1",
+  "geometry_m": {
+    "indoor_domain": {
+      "boundary": [{"x": 0, "y": 0}, {"x": 6, "y": 0}, {"x": 6, "y": 4}, {"x": 0, "y": 4}]
+    },
+    "walls": [
+      {"id": "top", "start": {"x": 0, "y": 0}, "end": {"x": 6, "y": 0}}
+    ],
+    "windows": [
+      {"id": "window-1", "wall_id": "top", "start": {"x": 1, "y": 0}, "end": {"x": 2, "y": 0}}
+    ]
+  },
+  "diffuser_definitions": [
+    {"id": "A", "name": "Reed example", "diffuser_type": "reed", "capacity": 200, "capacity_unit": "ml", "lifetime_days": 60, "provenance": "example"},
+    {"id": "B", "name": "Nebulizer example", "diffuser_type": "nebulizer", "capacity": 100, "capacity_unit": "ml", "lifetime_days": 30, "operating_hours_per_day": 8, "provenance": "example"}
+  ],
+  "placements": [
+    {"placement_id": "A1", "definition_id": "A", "position_m": {"x": 1, "y": 2}},
+    {"placement_id": "A2", "definition_id": "A", "position_m": {"x": 5, "y": 2}, "strength_override": 2},
+    {"placement_id": "B1", "definition_id": "B", "position_m": {"x": 4, "y": 3}}
+  ],
+  "opening_states": [{"opening_id": "window-1", "is_open": false}],
+  "conditions": {},
+  "settings": {"duration_s": 600, "sample_interval_s": 60, "grid_cell_size_m": 0.25}
+}

@@ -16,6 +16,7 @@ from app.infrastructure.database import Database
 from app.infrastructure.jobs import Jobs
 from app.infrastructure.storage import LocalStorage
 from app.infrastructure.upload_limit import UploadLimitMiddleware
+from app.simulations.router import router as simulations_router
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             "The operation could not complete."}}, status_code=500)
 
     app.include_router(router)
+    app.include_router(simulations_router)
     app.add_middleware(UploadLimitMiddleware, max_bytes=settings.max_upload_bytes + 1024 * 1024)
     app.add_middleware(CORSMiddleware, allow_origins=list(settings.cors_origins),
                        allow_methods=["GET", "POST"], allow_headers=["Content-Type"])

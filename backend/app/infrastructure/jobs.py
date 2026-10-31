@@ -39,6 +39,10 @@ def execute_recognition(target: str, image_path: str, width: int, height: int) -
         raise ValueError("Recognition dimensions must match the prepared image")
     if layout.revision != 1 or layout.calibration is not None or draft.floor_plan.reference_image is not None:
         raise ValueError("Recognition output violates the draft handoff contract")
+    if layout.indoor_domain is None:
+        warning = "Indoor domain estimate is unavailable; trace the indoor boundary manually."
+        if warning not in draft.warnings:
+            draft.warnings.append(warning)
     return draft.model_dump(mode="json")
 
 

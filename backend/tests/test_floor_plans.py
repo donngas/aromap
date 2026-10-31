@@ -133,7 +133,9 @@ def test_unavailable_recognition_and_unknown_resources(tmp_path):
             assert db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
 
 
-@pytest.mark.parametrize("provider,state", [("recognize", "succeeded"), ("fail", "failed")])
+@pytest.mark.parametrize("provider,state", [
+    ("recognize", "succeeded"), ("recognize_with_domain", "succeeded"), ("fail", "failed"),
+])
 def test_real_process_job_lifecycle_and_persistence(tmp_path, provider, state):
     settings = Settings(data_dir=tmp_path, recognition_callable=f"tests.recognition_provider:{provider}")
     with TestClient(create_app(settings)) as client:
@@ -147,6 +149,14 @@ def test_real_process_job_lifecycle_and_persistence(tmp_path, provider, state):
             assert result["error"] is None
             assert result["result"]["floor_plan"]["reference_image"] is None
             assert result["result"]["floor_plan"]["layout"]["calibration"] is None
+            domain = result["result"]["floor_plan"]["layout"]["indoor_domain"]
+            if provider == "recognize_with_domain":
+                assert domain["boundary"][2] == {"x": 12, "y": 4}
+                assert len(domain["boundary"]) == 6
+                assert domain["holes"][0][0] == {"x": 1, "y": 1}
+            else:
+                assert domain is None
+                assert any("Indoor domain estimate is unavailable" in w for w in result["result"]["warnings"])
             warning = result["result"]["warnings"][0]
             assert f"process {os.getpid()};" not in warning
         else:
@@ -222,3 +232,8 @@ def test_cors_and_openapi(tmp_path):
         assert "multipart/form-data" in schema["paths"]["/api/floor-plans/uploads"]["post"]["requestBody"]["content"]
         assert "ProjectDocument" not in schema["components"]["schemas"]
         assert "calibration" in schema["components"]["schemas"]["Layout"]["properties"]
+        domain_schema = schema["components"]["schemas"]["Layout"]["properties"]["indoor_domain"]
+        assert {"$ref": "#/components/schemas/PixelIndoorDomain"} in domain_schema["anyOf"]
+        assert {"type": "null"} in domain_schema["anyOf"]
+        assert "pixels" in schema["components"]["schemas"]["PixelPoint"]["properties"]["x"]["description"]
+        assert "meters" in schema["components"]["schemas"]["MetricPoint"]["properties"]["x"]["description"]

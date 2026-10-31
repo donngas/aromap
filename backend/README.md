@@ -17,8 +17,29 @@ Each operation receives only its relevant context: recognition uses an uploaded
 image ID; future simulation/advice requests carry the selected configuration and
 any needed result context, rather than the entire saved project. FE should associate
 results with submitted snapshots to avoid applying stale results after edits.
-Exact save structures, request correlation, and simulation/advice DTOs remain to
-be agreed as the engine becomes concrete; existing simulation models are drafts.
+The suggested logical save shape is frontend-owned, not a backend DTO:
+
+```text
+Project (schema_version, id, name)
+  floor_plan
+    prepared_image                   Blob locally, embedded for export
+    geometry_px                      dimensions, walls, doors, windows, labels, indoor domain
+    calibration                      pixel reference + known length in meters
+  diffuser_definitions[]              consumer specifications and provenance
+  scenarios[]
+    id, name
+    placements[]                     ID, definition ID, pixel position, overrides
+    opening_states[]
+    environmental settings
+    simulation settings
+  active_scenario_id
+```
+
+Backend handles, pending jobs, result arrays, and their submitted snapshots belong
+to a separate runtime/cache store. They are not required in portable exports.
+Keep pixel geometry/calibration authoritative; derive meters for each request.
+Save-format details and advice DTOs remain open. The simulation HTTP contract is
+defined below, with numerical defaults and artifact encoding still provisional.
 
 ## Run
 
@@ -192,6 +213,7 @@ typed result. Poll roughly once per second and stop at a terminal state.
         "doors": [],
         "windows": [],
         "room_labels": [],
+        "indoor_domain": null,
         "calibration": null
       },
       "reference_image": null
@@ -213,6 +235,21 @@ Recognition does not infer opening states or calibration; the endpoint returns
 `calibration: null` in the existing layout schema. Upload/job IDs stay in
 runtime state, outside portable frontend saves.
 
+`result.floor_plan.layout.indoor_domain` is an estimated **pixel-coordinate**
+footprint for user review/correction, or `null` with a warning when unavailable.
+Its shape is `{ "boundary": [PixelPoint, ...], "holes": [[PixelPoint, ...], ...] }`.
+Each ring has at least three ordered vertices and closes implicitly; the outer
+boundary may be concave (e.g. an L-shaped plan). Holes exclude areas such as outdoor
+courtyards, not ordinary rooms or internal walls. Initially there is one outer
+polygon; disconnected footprints and polygon topology validation remain future work.
+
+This change adds the output contract only: the current recognizer does not estimate
+the footprint yet, so it returns `null` and the worker adds a manual-tracing warning.
+The recognition owner will implement estimation. FE lets users correct an estimate
+or trace the missing boundary, stores it in pixels, and converts it to meters for
+`geometry_m.indoor_domain` in simulation. No new recognition request fields or
+separate domain endpoint are required.
+
 ### Errors
 
 ```json
@@ -233,11 +270,89 @@ Provider exceptions are logged server-side; jobs expose a generic
 `recognition_failed` error without paths or exception details. Invalid request
 fields use the same error envelope, including FastAPI validation failures.
 
+## Simulation contract (execution pending)
+
+Routes and typed request/response schemas are exposed in Swagger now:
+
+| Route | Contract | Current behavior |
+| --- | --- | --- |
+| `POST /api/simulations` | One metric configuration; future `202` with `job_id`, `client_request_id`, `status_url` | Validates then returns `503 simulation_unavailable`; creates no job |
+| `GET /api/simulations/{job_id}` | Status, request correlation, timestamps, result or error | `404 job_not_found`; no simulation jobs exist yet |
+| `GET /api/simulations/{job_id}/fields` | One download bundling concentration and active-domain mask | `404 result_not_found` |
+
+Request models live in `simulations/models.py` and `simulations/schemas.py`.
+See the [example request](tests/fixtures/simulations/request.json) and
+[example result metadata](tests/fixtures/simulations/result.json). They are schema
+fixtures, not simulated data or working download links.
+
+`SimulationRequest` carries `client_request_id`, `geometry_m`, consumer
+`diffuser_definitions`, metric `placements`, `opening_states`, `conditions`, and
+`settings`. Send only one selected configuration and its definitions: no image,
+pixel geometry, calibration, other scenarios, or entire project document.
+Every placement has a stable `placement_id` and `definition_id`; definitions contain
+raw capacity/units/lifetime/operating-hour inputs and provenance. Missing product
+information is allowed for later fallback resolution; no conversion to relative
+emission is implemented here. These product fields use API snake_case names;
+the FE's saved input format need not match them.
+
+The initial footprint representation is an `indoor_domain` polygon `boundary` with
+optional `holes`, all metric points. Closing edges are implicit. This distinguishes
+indoor space from the rectangular image extent. The recognition contract provides
+an optional estimated domain in pixels. The planned UI lets the user review/correct
+it, or trace a boundary when no estimate is available; FE retains the reviewed
+pixel geometry and converts it to meters for the simulation request. Estimation
+implementation and the UI interaction remain follow-up work.
+Walls have IDs and metric `start`
+and `end`; doors/windows additionally reference a `wall_id`. Placement positions
+are explicitly `position_m`. Polygon validity, wall topology, source containment,
+and cost limits remain engine/preparation work; type/reference checks alone do
+not establish that a configuration is runnable.
+
+Settings require positive `duration_s` and exactly one of `sample_interval_s` or
+strictly increasing `sample_times_s` within the duration. Grid size and spreading/
+removal coefficients are optional hints pending engine defaults; no physics defaults
+are implied by omission. Full numerical assumptions will be recorded in results.
+
+Completed status will contain `SimulationResult` metadata:
+
+```text
+run_id, input_fingerprint, model_version
+grid                              origin_m, cell_size_m, rows, columns, axis directions
+channels[]                        channel_id, placement_id, definition_id (ordered)
+sample_times_s[]
+fields                            url, bundle encoding, concentration axes/shape/units
+  active_domain_mask              axes, shape (included in the same download)
+resolved_assumptions[], diagnostics[], warnings[], expires_at
+```
+
+One channel represents one simulated placement, including separate channels for
+placements sharing a definition. Disabled placements do not need a channel. Channel
+list order is array order. Field axes are `[time, channel, row, column]`, with shape
+`[T, P, H, W]`: sampled times, placement channels, rows, columns. The mask has shape
+`[H, W]`; true means usable indoor space. Grid origin is the top-left grid corner;
+values represent cell centers at `(x + (column + 0.5)*cell_size,
+y + (row + 0.5)*cell_size)`, x rightward/y downward. Units are
+`relative_units_per_m2`, not perceived scent strength.
+
+Polling metadata never embeds the large numerical arrays. After success, FE fetches
+`fields.url` once: the bundle contains `concentration` and `active_domain_mask`
+arrays. There is no separate mask endpoint or download. FE then performs playback
+and channel highlighting locally.
+Artifact encoding is intentionally not selected yet; the download routes document
+a generic binary response until an engine format is chosen. Aggregates by definition
+or all placements can be derived under shared relative-unit assumptions instead of
+duplicating arrays. Correlate responses using `client_request_id` and retain the
+submitted snapshot to determine staleness; `input_fingerprint` identifies resolved
+backend input, not the current editor state.
+
+The placeholder endpoints do not execute, store snapshots, create queued work, or
+serve fake fields. No simulation DB schema/worker is installed in this change.
+
 ## Jobs, expiry, and restart behavior
 
 Currently only recognition jobs are submitted. Uploads and image retrieval are
-not jobs. Simulation can reuse lifecycle infrastructure later; no simulation or
-advice endpoint is implemented yet.
+not jobs. Simulation can reuse lifecycle infrastructure later; its HTTP contracts
+are placeholders and no execution is implemented. Advice has no endpoint yet.
 
 SQLite stores upload metadata and job kind/state, input image reference,
 creation/update/expiry timestamps, result reference, and error details. It never
@@ -260,10 +375,10 @@ A successful browser save must not depend on any of these temporary resources.
 
 | Package | Owns | Contracts |
 | --- | --- | --- |
-| `floor_plans` | Image endpoints, preparation, recognition orchestration | `UploadedImage`, recognition DTOs, `RecognitionDraft`, `Layout` |
+| `floor_plans` | Image endpoints, preparation, recognition orchestration | `UploadedImage`, recognition DTOs, `RecognitionDraft`, `Layout`, `PixelIndoorDomain` |
 | `floor_plans/recognition` | Image-to-editable-geometry implementation | Existing `Path → RecognitionDraft` boundary |
 | `diffusers` | Relative emission definitions and future examples | `DiffuserDefinition` |
-| `simulations` | Submitted configuration, metric preparation, engine/results | `SimulationConfiguration`, `SimulationInput`, `SimulationResult` |
+| `simulations` | Metric configuration and HTTP contracts, future engine/results | `SimulationRequest`, `SimulationStatus`, `SimulationResult`, provisional `SimulationInput` |
 | `advice` | Future on-demand interpretation | `AdviceRequest.configuration`, `AdviceResponse` |
 | `infrastructure` | Local storage, SQLite, job execution, upload-body limit | Operational resources, not project ownership |
 
@@ -311,6 +426,10 @@ clutter), the draft includes a warning that results may be unreliable.
   call, and owns storage/cleanup. Recognition must not modify/delete the original.
 - Recognizer generates layout/geometry IDs and returns revision `1`, matching image
   dimensions, `reference_image=None`, and `calibration=None`.
+- `layout.indoor_domain` is an estimated polygon in prepared-image pixels, or
+  `None` with a warning when unavailable. Map its vertices back after any internal
+  resizing/rotation, just as for wall endpoints. Estimation is left to the
+  recognition implementation; consumers may review/correct or trace the domain.
 - Internal resizing/rotation must map back to input image coordinates: top-left
   origin, x rightward, y downward.
 - Walls are nonzero, zero-thickness segments split at every crossing and T-junction.
@@ -330,19 +449,20 @@ The executor checks basic output structure, dimensions, revision, and unset
 calibration/reference image. Full geometry/topology validation remains follow-up
 work; the model declarations do not enforce it yet.
 
-The handed-off `floor_plans` definitions remain unchanged. The recognition endpoint
-returns `calibration: null`; actual calibration remains frontend-owned.
+The recognition contract is extended additively with nullable `layout.indoor_domain`
+(`PixelIndoorDomain`). Existing providers can omit it while estimation is pending.
+The endpoint still returns `calibration: null`; actual calibration is frontend-owned.
 
 ## Backend roadmap
 
 1. **Recognition integration:** wire the provider into the existing job flow and
-   verify returned geometry against prepared images.
+   implement the estimated indoor domain; verify pixel geometry against prepared images.
 2. **Engine prototype:** start independently with predefined metric layouts and
    sources. Choose the numerical approach and validate boundaries and behavior.
-3. **Contracts and preparation:** refine simulation inputs/outputs after the
-   prototype; accept FE-calibrated metric geometry, resolve source assumptions,
+3. **Preparation:** refine provisional numerical details after the prototype;
+   implement the metric HTTP contract, resolve source assumptions,
    validate inputs, and agree with FE on result alignment/playback metadata.
-4. **Simulation delivery:** add queued execution, sampled-field artifacts, result
+4. **Simulation delivery:** connect the placeholder routes to queued execution, sampled-field artifacts, result
    retrieval, and correlation with submitted configurations.
 5. **Advice and reliability:** add on-demand interpretation, execution limits,
    recovery improvements, and representative end-to-end checks.
@@ -356,6 +476,9 @@ persistence/export stays frontend-owned; no backend project storage is planned.
 `PixelPoint` is used for editable geometry, calibration endpoints, and placements.
 `MetricPoint` is used for resolved solver geometry and sources. Both serialize as
 `{ "x": ..., "y": ... }`; containing schemas define their units.
+Recognition's `PixelIndoorDomain` uses pixels; simulation's `IndoorDomain` uses
+meters. Neither uses screen coordinates. The prepared-image top-left origin and
+rightward/downward axes are preserved through FE's scale conversion.
 
 The current planning direction is FE-owned calibration and pixel-to-meter
 conversion before submission, rather than requiring a backend scaling operation.
@@ -389,16 +512,16 @@ flowchart TD
     Result --> Playback["Browser: heatmap and playback"]
 ```
 
-Future simulation requests are expected to carry metric geometry, definitions,
+Simulation requests carry metric geometry, definitions,
 placements, opening states, conditions, and settings for one configuration. They omit image
 bytes and inactive scenarios. Preparation validates references, resolves omitted
 opening states to closed, and records explicit assumptions in a detached input.
 Open doors connect spaces; windows are recognized now but open-window physical
 behavior is still undecided. No preparation/solver implementation is included yet.
 
-Before frontend heatmap work, agree on result grid origin, dimensions, row/column
-order, blocked-cell encoding, sample times, concentration units, field format, and
-correlation with submitted edits. Advice similarly accepts explicit configuration
+The HTTP contract now describes grid alignment, channel/time/array ordering,
+relative units, and request correlation; actual field encoding and numerical
+defaults remain to be agreed with the engine prototype. Advice accepts explicit configuration
 context, not the browser's project document.
 
 Results will represent approximate relative concentrations under stated assumptions,
