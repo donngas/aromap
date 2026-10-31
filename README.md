@@ -83,4 +83,19 @@ calls; same-origin proxying does not require CORS. For LAN access, set
 `HOST_BIND=0.0.0.0` and configure actual browser origins. Swagger remains directly
 accessible on the published backend port independently of frontend routing.
 
-An actual production Compose file and cloudflared wiring are intentionally deferred.
+For deployment, build the production targets in CI, push versioned images to GHCR,
+and pull them from the server's own Compose configuration. Docker can reuse the
+dependency layer when the lockfiles are unchanged. The backend also uses a BuildKit
+cache mount for uv downloads without including that cache in the image. Configure
+persistent builder caching where available for ephemeral CI runners; cache-mount
+persistence depends on the CI builder. Subsequent server pulls reuse unchanged layers.
+Staging exercises the image commands, proxy and volume assumptions; server routing
+and cloudflared configuration belong to the server deployment.
+
+Start sizing with approximately 2 GiB of memory for the host/container workload,
+leaving room for the OS; this is a test target, not a guaranteed minimum. Run the
+backend's documented benchmarks and representative recognition and simulation jobs
+on the actual host, observe peak memory and runtime, and set the container memory
+limit accordingly. The application estimates memory but does not enforce an RSS cap.
+Use a persistent writable `/data` volume, check free space before the event, and
+monitor it during a load test. The default cleanup retains results for 24 hours.

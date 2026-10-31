@@ -15,13 +15,13 @@ ENV UV_COMPILE_BYTECODE=1 \
 COPY pyproject.toml uv.lock ./
 
 FROM base AS development
-RUN uv sync --locked
+RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked
 COPY app ./app
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/app/app"]
 
 FROM base AS production
-RUN uv sync --locked --no-dev
+RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked --no-dev
 COPY app ./app
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

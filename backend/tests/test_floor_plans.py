@@ -2,6 +2,7 @@ import os
 import sqlite3
 import time
 from io import BytesIO
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -121,16 +122,25 @@ def test_storage_failure_is_server_error_and_leaves_no_upload(tmp_path, monkeypa
         assert not list((tmp_path / "uploads").iterdir())
 
 
-def test_unavailable_recognition_and_unknown_resources(tmp_path):
+def test_default_recognition_and_unknown_resources(tmp_path):
     with TestClient(create_app(Settings(data_dir=tmp_path))) as client:
-        metadata = upload(client).json()
+        fixture = Path(__file__).parent / "floor_plans/recognition/fixtures/cafe_plan.png"
+        metadata = upload(client, fixture.read_bytes()).json()
         response = client.post("/api/floor-plans/recognitions", json={"image_id": metadata["image_id"]})
-        assert response.status_code == 503
-        assert response.json()["detail"]["code"] == "recognition_unavailable"
+        assert response.status_code == 202
+        result = wait_terminal(client, response.json()["status_url"])
+        assert result["state"] == "succeeded"
+        layout = result["result"]["floor_plan"]["layout"]
+        assert layout["width_px"] == metadata["width_px"]
+        assert layout["walls"]
         assert client.get("/api/floor-plans/recognitions/unknown").status_code == 404
         assert client.get("/api/floor-plans/uploads/unknown/image").status_code == 404
-        with sqlite3.connect(tmp_path / "registry.sqlite3") as db:
-            assert db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
+
+
+def test_invalid_recognizer_fails_startup(tmp_path):
+    with pytest.raises((ImportError, AttributeError, ValueError)):
+        with TestClient(create_app(Settings(data_dir=tmp_path, recognition_callable="missing_provider:recognize"))):
+            pass
 
 
 @pytest.mark.parametrize("provider,state", [
@@ -197,6 +207,35 @@ def test_queue_bound_and_active_input_retention(tmp_path):
         # The second queued invocation needs its own release signal.
         (directory / "release").touch()
         assert wait_terminal(client, second.json()["status_url"])["state"] == "succeeded"
+
+
+def test_recognition_timeout_releases_queue(tmp_path):
+    settings = Settings(data_dir=tmp_path, recognition_timeout_seconds=3,
+                        recognition_callable="tests.recognition_provider:wait_for_release")
+    with TestClient(create_app(settings)) as client:
+        first_image = upload(client).json()["image_id"]
+        second_image = upload(client).json()["image_id"]
+        first = client.post("/api/floor-plans/recognitions", json={"image_id": first_image}).json()
+        second_dir = tmp_path / "uploads" / second_image
+        (second_dir / "release").touch()
+        second = client.post("/api/floor-plans/recognitions", json={"image_id": second_image}).json()
+        assert wait_terminal(client, first["status_url"])["error"]["code"] == "execution_timeout"
+        assert wait_terminal(client, second["status_url"])["state"] == "succeeded"
+
+
+def test_shutdown_stops_running_recognition(tmp_path):
+    settings = Settings(data_dir=tmp_path, recognition_callable="tests.recognition_provider:wait_for_release")
+    with TestClient(create_app(settings)) as client:
+        image_id = upload(client).json()["image_id"]
+        job = client.post("/api/floor-plans/recognitions", json={"image_id": image_id}).json()
+        started = tmp_path / "uploads" / image_id / "started"
+        deadline = time.monotonic() + 10
+        while not started.exists():
+            assert time.monotonic() < deadline
+            time.sleep(0.02)
+    with TestClient(create_app(settings)) as client:
+        status = client.get(job["status_url"]).json()
+        assert (status["state"], status["error"]["code"]) == ("failed", "job_interrupted")
 
 
 def test_expiry_cleanup_and_restart_interruption(tmp_path):

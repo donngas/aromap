@@ -11,7 +11,6 @@ import json
 from datetime import datetime, timezone
 import multiprocessing
 import time
-from concurrent.futures import ProcessPoolExecutor
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -37,7 +36,7 @@ async def stop_process(process):
         process.kill()
         await asyncio.to_thread(process.join, TERMINATION_GRACE_S)
     if process.is_alive():
-        logger.error("Simulation process %s did not exit after kill", process.pid)
+        logger.error("Job process %s did not exit after kill", process.pid)
     else:
         process.close()
 
@@ -67,13 +66,19 @@ def execute_recognition(target: str, image_path: str, width: int, height: int) -
     return draft.model_dump(mode="json")
 
 
+def publish_recognition(root: str, job_id: str, target: str, image_path: str, width: int, height: int):
+    from pathlib import Path
+
+    result = execute_recognition(target, image_path, width, height)
+    LocalStorage(Path(root)).write_json(f"results/{job_id}.json", result)
+
+
 class Jobs:
     def __init__(self, settings: Settings, database: Database, storage: LocalStorage):
         self.settings = settings
         self.database = database
         self.storage = storage
         self.queue: asyncio.Queue[str] = asyncio.Queue(maxsize=settings.queue_capacity)
-        self.executor: ProcessPoolExecutor | None = None
         self.worker: asyncio.Task | None = None
         self.cleaner: asyncio.Task | None = None
 
@@ -88,11 +93,7 @@ class Jobs:
             self.cleanup()
         except OSError:
             logger.exception("Artifact cleanup failed at startup; retrying next interval")
-        if self.settings.recognition_callable:
-            load_recognizer(self.settings.recognition_callable)
-            self.executor = ProcessPoolExecutor(
-                max_workers=1, mp_context=multiprocessing.get_context("spawn")
-            )
+        load_recognizer(self.settings.recognition_callable)
         self.worker = asyncio.create_task(self.dispatch(), name="job-worker")
         self.cleaner = asyncio.create_task(self.periodic_cleanup(), name="artifact-cleanup")
 
@@ -101,8 +102,6 @@ class Jobs:
             if task:
                 task.cancel()
         await asyncio.gather(*(t for t in (self.cleaner, self.worker) if t), return_exceptions=True)
-        if self.executor:
-            await asyncio.to_thread(self.executor.shutdown, wait=True, cancel_futures=True)
         with self.database.connect() as db:
             db.execute(
                 "UPDATE jobs SET state='failed', updated_at=?, error_code='job_interrupted', "
@@ -111,8 +110,6 @@ class Jobs:
             )
 
     def submit_recognition(self, image_id: str) -> str:
-        if not self.settings.recognition_callable:
-            raise api_error(503, "recognition_unavailable", "Recognition is not integrated yet.")
         if self.queue.full():
             raise api_error(429, "queue_full", "Recognition queue is full; try again later.")
         now = time.time()
@@ -208,6 +205,32 @@ class Jobs:
         finally:
             await stop_process(process)
 
+    async def run_recognition(self, job_id: str, image):
+        path = f"results/{job_id}.json"
+        process = multiprocessing.get_context("spawn").Process(
+            target=publish_recognition,
+            args=(str(self.storage.root), job_id, self.settings.recognition_callable,
+                  str(self.storage.path(image["relative_path"])), image["width_px"], image["height_px"]),
+        )
+        process.start()
+        try:
+            deadline = asyncio.get_running_loop().time() + self.settings.recognition_timeout_seconds
+            while process.is_alive():
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    raise TimeoutError("Recognition exceeded its execution deadline")
+                await asyncio.sleep(min(0.1, remaining))
+            if process.exitcode != 0:
+                raise RuntimeError("Recognition process exited unexpectedly")
+            # Ensure the published result is complete before marking the job successful.
+            RecognitionDraft.model_validate_json(self.storage.path(path).read_text(encoding="utf-8"))
+            now = time.time()
+            with self.database.connect() as db:
+                db.execute("UPDATE jobs SET state='succeeded', updated_at=?, expires_at=?, result_path=? WHERE id=?",
+                           (now, now + self.settings.retention_seconds, path, job_id))
+        finally:
+            await stop_process(process)
+
     def recognition_status(self, job_id: str):
         with self.database.connect() as db:
             row = db.execute(
@@ -250,18 +273,7 @@ class Jobs:
                 if kind == "simulation":
                     await self.run_simulation(job_id)
                     continue
-                result = await asyncio.get_running_loop().run_in_executor(
-                    self.executor, execute_recognition, self.settings.recognition_callable,
-                    str(self.storage.path(image["relative_path"])), image["width_px"], image["height_px"],
-                )
-                relative_path = f"results/{job_id}.json"
-                self.storage.write_json(relative_path, result)
-                now = time.time()
-                with self.database.connect() as db:
-                    db.execute(
-                        "UPDATE jobs SET state='succeeded', updated_at=?, expires_at=?, result_path=? WHERE id=?",
-                        (now, now + self.settings.retention_seconds, relative_path, job_id),
-                    )
+                await self.run_recognition(job_id, image)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
