@@ -1,4 +1,4 @@
-"""Operational limits for preparation; no physical parameters are chosen here."""
+"""Operational limits and provisional modeling defaults for preparation/execution."""
 
 from dataclasses import dataclass
 import math

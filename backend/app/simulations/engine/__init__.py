@@ -1,1 +1,1 @@
-"""Metric grid preparation and numerical containers; time stepping is pending."""
+"""Metric grid preparation and sparse implicit transport; see solver.simulate."""
