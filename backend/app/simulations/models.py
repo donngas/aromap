@@ -2,18 +2,27 @@
 
 from pydantic import BaseModel, Field
 
-from app.floor_plans.models import Point
+
+class MetricPoint(BaseModel):
+    """Meters: same top-left origin and axis directions as the editable layout.
+
+    Preparation converts pixel positions before constructing engine inputs;
+    the engine never interprets image dimensions or screen coordinates.
+    """
+
+    x: float
+    y: float
 
 
 class MetricWall(BaseModel):
-    start: Point
-    end: Point
+    start: MetricPoint
+    end: MetricPoint
 
 
 class MetricOpening(BaseModel):
     wall_index: int = Field(ge=0)
-    start: Point
-    end: Point
+    start: MetricPoint
+    end: MetricPoint
 
 
 class SimulationGeometry(BaseModel):
@@ -25,7 +34,7 @@ class SimulationGeometry(BaseModel):
 
 class EmissionSource(BaseModel):
     placement_id: str
-    position_m: Point
+    position_m: MetricPoint
     rate_relative_units_per_s: float = Field(ge=0)
 
 
