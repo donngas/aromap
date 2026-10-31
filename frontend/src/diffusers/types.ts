@@ -1,5 +1,5 @@
 // Raw user input for a diffuser product. Placements (position, count) are set
-// later in the workspace; backend DiffuserDefinition is derived from this.
+// later in the workspace; an API adapter maps this to ConsumerDiffuserDefinition.
 
 export const DIFFUSER_TYPES = ['reed', 'ultrasonic', 'nebulizer', 'candle'] as const
 export type DiffuserType = (typeof DIFFUSER_TYPES)[number]

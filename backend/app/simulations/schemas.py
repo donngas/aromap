@@ -57,7 +57,10 @@ class ConcentrationFields(ContractModel):
         "time", "channel", "row", "column",
     )
     shape: tuple[PositiveInt, PositiveInt, PositiveInt, PositiveInt]
-    units: Literal["relative_units_per_m2"] = "relative_units_per_m2"
+    units: Literal["relative_units_per_m2"] = Field(
+        default="relative_units_per_m2",
+        description="One relative unit is a surrogate for 1 mg consumed formulation, not measured fragrance mass or perceived intensity.",
+    )
     active_domain_mask: ActiveDomainMask
 
 
