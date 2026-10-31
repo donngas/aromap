@@ -61,11 +61,27 @@ the FE lead's work is integrated. The staging template serves `/`
 and static assets only: SPA fallback and API proxy/configuration remain with the
 FE lead. No frontend application/configuration files are changed by this setup.
 
-Browser API calls must reach the published backend URL unless the FE lead supplies
-an `/api` proxy. Containers use `http://backend:8000`; browsers use the configured
-host address/port. Compose automatically allows localhost/127.0.0.1 frontend origins
-at `FRONTEND_PORT` unless `AROMAP_CORS_ORIGINS` is explicitly set. For LAN access,
-set `HOST_BIND=0.0.0.0` and configure actual browser origins. Swagger works directly
-on the backend origin independently of frontend routing.
+The agreed routing contract is browser calls to relative `/api/...` paths. The
+FE lead must proxy those paths in Vite for development and Nginx for staging,
+preserving the `/api` prefix. Compose now supplies `API_PROXY_TARGET` (default
+`http://backend:8000`) to the frontend development service. This variable alone
+does not enable a proxy and is not a browser URL; Nginx needs separate configuration.
+Until the FE proxy work is implemented, browser clients must explicitly use the
+backend's published URL. No frontend-owned files are changed here.
+
+For Vite running outside Docker, set its proxy target to the published backend
+address (for example `http://localhost:8000`). The FE lead owns loading that setting
+in Vite; the root `.env` is read by Compose, not automatically by host-run Vite.
+
+Changing `BACKEND_PORT` changes host access only; Docker proxies continue using
+`backend:8000`. Both serving modes must permit upload requests of at least
+`AROMAP_MAX_UPLOAD_BYTES + 1 MiB` including multipart overhead (12 MiB is sufficient
+for the default limit). Nginx also needs SPA fallback for frontend routes.
+
+Compose automatically allows localhost/127.0.0.1 frontend origins at `FRONTEND_PORT`
+unless `AROMAP_CORS_ORIGINS` is explicitly set. This is for direct cross-origin API
+calls; same-origin proxying does not require CORS. For LAN access, set
+`HOST_BIND=0.0.0.0` and configure actual browser origins. Swagger remains directly
+accessible on the published backend port independently of frontend routing.
 
 An actual production Compose file and cloudflared wiring are intentionally deferred.

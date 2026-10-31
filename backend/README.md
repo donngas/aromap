@@ -81,6 +81,21 @@ can access it until expiry. These endpoints are temporary resources, not cloud s
 
 ## Frontend contract
 
+### API routing
+
+Frontend application code should use relative `/api/...` URLs. The FE lead owns
+Vite development proxying and Nginx staging proxying to `http://backend:8000`,
+preserving the `/api` prefix. Compose supplies `API_PROXY_TARGET` for Vite to consume;
+proxy configuration is not yet implemented in frontend files. Nginx must configure
+its upstream separately; inheriting that variable does not configure Nginx.
+
+The backend remains directly available on `BACKEND_PORT` for Swagger and API tools.
+Host port changes do not change the internal upstream. Direct browser requests
+from another origin use configured CORS; same-origin proxied requests need none.
+Proxies must allow at least the configured file limit plus 1 MiB multipart overhead.
+The returned image/status paths are relative to the API origin and work through
+the same `/api` proxy. Without a proxy, resolve them against the backend origin.
+
 ### Upload
 
 `POST /api/floor-plans/uploads`, `multipart/form-data`, field **`image`**.
@@ -92,7 +107,7 @@ recognized coordinates refer to this prepared image, not the original file.
 ```javascript
 const body = new FormData();
 body.append("image", file);
-const response = await fetch(`${apiBase}/api/floor-plans/uploads`, {
+const response = await fetch('/api/floor-plans/uploads', {
   method: "POST", body,
 }); // Let the browser set Content-Type and its multipart boundary.
 if (!response.ok) throw await response.json();
