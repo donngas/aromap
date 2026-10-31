@@ -1,11 +1,11 @@
 # Aromap
 
-Indoor scent-distribution simulator built for the **Sensation** hackathon.
+Indoor scent-distribution simulator built for the Korea University College of Informatics Inthon 2026, following the theme "Sensation."  
 Upload a floor plan, review its geometry and metric scale, then compare diffuser
 placements, airflow devices, and opening states over time.
 
 - **Frontend:** React/TypeScript; editable projects, local persistence, scenario comparison, and playback.
-- **Backend:** FastAPI/OpenCV for floor-plan recognition; NumPy/SciPy for simulation; SQLite and local files for temporary jobs and results.
+- **Backend:** FastAPI; OpenCV for floor-plan recognition; NumPy/SciPy for simulation; SQLite and local files for temporary jobs and results.
 - **Model:** height-averaged 2D relative concentration. Outputs support scenario comparison, not measured fragrance concentration or perceived scent intensity.
 
 ## Run
@@ -260,3 +260,23 @@ human scent perception.
 4. Dols and Polidoro (2020), [CONTAM User Guide and Program Documentation, Version 3.4](https://doi.org/10.6028/NIST.TN.1887r1), NIST Technical Note 1887 Revision 1 — airflow and contaminant mass-balance modeling.
 5. NIST, [FiPy: Numerical Schemes](https://pages.nist.gov/fipy/en/stable/numerical/scheme.html) — upwind discretization and numerical diffusion.
 6. ASHRAE, [Handbook—Fundamentals, Chapter 16: Ventilation and Infiltration](https://handbook.ashrae.org/Handbooks/F17/IP/f17_ch16/f17_ch16_ip.aspx) — air-change rates and tracer-gas decay.
+
+## Credits
+
+- **Interface and storage:** React, React DOM, and idb-keyval.
+- **API and validation:** FastAPI, Starlette, Pydantic, Uvicorn, and python-multipart.
+- **Recognition and image processing:** OpenCV and Pillow.
+- **Simulation and geometry:** NumPy, SciPy, Shapely, and GEOS; bundled numerical/media libraries include OpenBLAS, LAPACK, and FFmpeg.
+- **Development and runtime:** TypeScript, Vite, Oxlint, pytest, HTTPX, uv, Python, Node.js, Nginx, and Docker Compose.
+- **Typography:** Cormorant Garamond, IBM Plex Sans KR, and Noto Serif KR, served through Google Fonts.
+
+Versions, licenses, and attribution notices are in [THIRD_PARTY_NOTICE.md](THIRD_PARTY_NOTICE.md).
+Scientific references are listed separately above.
+
+## Misc.
+
+Copyright © 2026 Team 7 "운수좋은향". All rights reserved.  
+Developed as part of Korea University College of Informatics Inthon 2026.
+
+This project is provided "as is", without warranty of any kind, express or implied,
+including warranties of merchantability or fitness for a particular purpose.
