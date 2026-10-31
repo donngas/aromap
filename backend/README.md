@@ -23,7 +23,7 @@ The suggested logical save shape is frontend-owned, not a backend DTO:
 Project (schema_version, id, name)
   floor_plan
     prepared_image                   Blob locally, embedded for export
-    geometry_px                      dimensions, walls, doors, windows, labels
+    geometry_px                      dimensions, walls, doors, windows, labels, indoor domain
     calibration                      pixel reference + known length in meters
   diffuser_definitions[]              consumer specifications and provenance
   scenarios[]
@@ -213,6 +213,7 @@ typed result. Poll roughly once per second and stop at a terminal state.
         "doors": [],
         "windows": [],
         "room_labels": [],
+        "indoor_domain": null,
         "calibration": null
       },
       "reference_image": null
@@ -233,6 +234,21 @@ reference image to returned geometry, and asks before replacing existing edits.
 Recognition does not infer opening states or calibration; the endpoint returns
 `calibration: null` in the existing layout schema. Upload/job IDs stay in
 runtime state, outside portable frontend saves.
+
+`result.floor_plan.layout.indoor_domain` is an estimated **pixel-coordinate**
+footprint for user review/correction, or `null` with a warning when unavailable.
+Its shape is `{ "boundary": [PixelPoint, ...], "holes": [[PixelPoint, ...], ...] }`.
+Each ring has at least three ordered vertices and closes implicitly; the outer
+boundary may be concave (e.g. an L-shaped plan). Holes exclude areas such as outdoor
+courtyards, not ordinary rooms or internal walls. Initially there is one outer
+polygon; disconnected footprints and polygon topology validation remain future work.
+
+This change adds the output contract only: the current recognizer does not estimate
+the footprint yet, so it returns `null` and the worker adds a manual-tracing warning.
+The recognition owner will implement estimation. FE lets users correct an estimate
+or trace the missing boundary, stores it in pixels, and converts it to meters for
+`geometry_m.indoor_domain` in simulation. No new recognition request fields or
+separate domain endpoint are required.
 
 ### Errors
 
@@ -281,10 +297,11 @@ the FE's saved input format need not match them.
 
 The initial footprint representation is an `indoor_domain` polygon `boundary` with
 optional `holes`, all metric points. Closing edges are implicit. This distinguishes
-indoor space from the rectangular image extent. The planned UI lets the user define
-the indoor boundary after initial recognition; FE retains it with pixel geometry
-and converts it to meters for the simulation request. Recognition does not
-currently supply this boundary. The UI interaction remains follow-up work.
+indoor space from the rectangular image extent. The recognition contract provides
+an optional estimated domain in pixels. The planned UI lets the user review/correct
+it, or trace a boundary when no estimate is available; FE retains the reviewed
+pixel geometry and converts it to meters for the simulation request. Estimation
+implementation and the UI interaction remain follow-up work.
 Walls have IDs and metric `start`
 and `end`; doors/windows additionally reference a `wall_id`. Placement positions
 are explicitly `position_m`. Polygon validity, wall topology, source containment,
@@ -358,7 +375,7 @@ A successful browser save must not depend on any of these temporary resources.
 
 | Package | Owns | Contracts |
 | --- | --- | --- |
-| `floor_plans` | Image endpoints, preparation, recognition orchestration | `UploadedImage`, recognition DTOs, `RecognitionDraft`, `Layout` |
+| `floor_plans` | Image endpoints, preparation, recognition orchestration | `UploadedImage`, recognition DTOs, `RecognitionDraft`, `Layout`, `PixelIndoorDomain` |
 | `floor_plans/recognition` | Image-to-editable-geometry implementation | Existing `Path → RecognitionDraft` boundary |
 | `diffusers` | Relative emission definitions and future examples | `DiffuserDefinition` |
 | `simulations` | Metric configuration and HTTP contracts, future engine/results | `SimulationRequest`, `SimulationStatus`, `SimulationResult`, provisional `SimulationInput` |
@@ -409,6 +426,10 @@ clutter), the draft includes a warning that results may be unreliable.
   call, and owns storage/cleanup. Recognition must not modify/delete the original.
 - Recognizer generates layout/geometry IDs and returns revision `1`, matching image
   dimensions, `reference_image=None`, and `calibration=None`.
+- `layout.indoor_domain` is an estimated polygon in prepared-image pixels, or
+  `None` with a warning when unavailable. Map its vertices back after any internal
+  resizing/rotation, just as for wall endpoints. Estimation is left to the
+  recognition implementation; consumers may review/correct or trace the domain.
 - Internal resizing/rotation must map back to input image coordinates: top-left
   origin, x rightward, y downward.
 - Walls are nonzero, zero-thickness segments split at every crossing and T-junction.
@@ -428,13 +449,14 @@ The executor checks basic output structure, dimensions, revision, and unset
 calibration/reference image. Full geometry/topology validation remains follow-up
 work; the model declarations do not enforce it yet.
 
-The handed-off `floor_plans` definitions remain unchanged. The recognition endpoint
-returns `calibration: null`; actual calibration remains frontend-owned.
+The recognition contract is extended additively with nullable `layout.indoor_domain`
+(`PixelIndoorDomain`). Existing providers can omit it while estimation is pending.
+The endpoint still returns `calibration: null`; actual calibration is frontend-owned.
 
 ## Backend roadmap
 
 1. **Recognition integration:** wire the provider into the existing job flow and
-   verify returned geometry against prepared images.
+   implement the estimated indoor domain; verify pixel geometry against prepared images.
 2. **Engine prototype:** start independently with predefined metric layouts and
    sources. Choose the numerical approach and validate boundaries and behavior.
 3. **Preparation:** refine provisional numerical details after the prototype;
@@ -454,6 +476,9 @@ persistence/export stays frontend-owned; no backend project storage is planned.
 `PixelPoint` is used for editable geometry, calibration endpoints, and placements.
 `MetricPoint` is used for resolved solver geometry and sources. Both serialize as
 `{ "x": ..., "y": ... }`; containing schemas define their units.
+Recognition's `PixelIndoorDomain` uses pixels; simulation's `IndoorDomain` uses
+meters. Neither uses screen coordinates. The prepared-image top-left origin and
+rightward/downward axes are preserved through FE's scale conversion.
 
 The current planning direction is FE-owned calibration and pixel-to-meter
 conversion before submission, rather than requiring a backend scaling operation.

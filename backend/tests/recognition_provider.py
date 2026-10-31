@@ -6,7 +6,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from app.floor_plans.models import FloorPlan, Layout, RecognitionDraft
+from app.floor_plans.models import FloorPlan, Layout, PixelIndoorDomain, RecognitionDraft
 from app.floor_plans.recognition.interface import RecognitionError
 
 
@@ -22,6 +22,17 @@ def recognize(image_path: Path) -> RecognitionDraft:
 
 def fail(image_path: Path) -> RecognitionDraft:
     raise RecognitionError(f"Private provider details: {image_path}")
+
+
+def recognize_with_domain(image_path: Path) -> RecognitionDraft:
+    """Contract fixture only: preserve a concave pixel footprint and courtyard."""
+    draft = recognize(image_path)
+    draft.floor_plan.layout.indoor_domain = PixelIndoorDomain(
+        boundary=[{"x": x, "y": y} for x, y in
+                  ((0, 0), (12, 0), (12, 4), (6, 4), (6, 8), (0, 8))],
+        holes=[[{"x": x, "y": y} for x, y in ((1, 1), (2, 1), (2, 2), (1, 2))]],
+    )
+    return draft
 
 
 def wait_for_release(image_path: Path) -> RecognitionDraft:

@@ -22,13 +22,15 @@ class SimulationAccepted(ContractModel):
 
 
 class GridMetadata(ContractModel):
-    origin_m: MetricPoint
-    cell_size_m: float = Field(gt=0)
-    rows: PositiveInt
-    columns: PositiveInt
+    origin_m: MetricPoint = Field(description="Top-left grid corner in meters, in the calibrated layout frame.")
+    cell_size_m: float = Field(gt=0, description="Cell side length in meters, not image pixels.")
+    rows: PositiveInt = Field(description="Number of grid rows; an array count, not a physical distance.")
+    columns: PositiveInt = Field(description="Number of grid columns; an array count, not a physical distance.")
     x_direction: Literal["right"] = "right"
     y_direction: Literal["down"] = "down"
-    cell_position: Literal["center"] = "center"
+    cell_position: Literal["center"] = Field(
+        default="center", description="Values are at cell centers: origin_m + (index + 0.5) * cell_size_m.",
+    )
 
 
 class PlacementChannel(ContractModel):
