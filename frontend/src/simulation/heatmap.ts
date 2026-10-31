@@ -1,20 +1,14 @@
 // Draws one time step of the simulated field over the floor plan, one flat
 // colour per 25 cm grid cell. Colour never crosses a wall: the plan is split
-// into rooms by its closed walls (open doors are gaps), and every pixel takes
-// the value of the nearest cell whose centre lies in the same room. This is
+// into rooms by its closed walls (open doors and windows are gaps), and every
+// pixel takes the value of the nearest cell whose centre lies in the same room. This is
 // the backend's own rule: a cell belongs where its centre is, and cells only
 // exchange scent when the line between their centres crosses no wall.
 
+import { scentShade, type Rgb } from '../diffusers/scents.ts'
 import type { Layout, PixelPoint } from '../floorPlan/layout.ts'
 import type { SimulationField } from './run.ts'
 
-/** Pale blush to soft rose: reads as a pleasant scent, not a hazard. */
-const RAMP: [number, number, number][] = [
-  [252, 228, 234],
-  [246, 196, 211],
-  [233, 158, 184],
-  [206, 116, 152],
-]
 /** Strength of the log scale; concentrations fall off steeply from a source. */
 const LOG_K = 40
 const MAX_ALPHA = 0.72
@@ -30,7 +24,7 @@ export interface CellMap {
 
 export interface CellMapInput {
   layout: Layout
-  openDoorIds: ReadonlySet<string>
+  openOpeningIds: ReadonlySet<string>
   boundary: PixelPoint[]
   holes: PixelPoint[][]
   field: SimulationField
@@ -38,11 +32,11 @@ export interface CellMapInput {
   mpp: number
 }
 
-export function buildCellMap({ layout, openDoorIds, boundary, holes, field, mpp }: CellMapInput): CellMap {
+export function buildCellMap({ layout, openOpeningIds, boundary, holes, field, mpp }: CellMapInput): CellMap {
   const s = Math.min(1, RASTER_MAX / Math.max(layout.width_px, layout.height_px))
   const width = Math.ceil(layout.width_px * s)
   const height = Math.ceil(layout.height_px * s)
-  const region = labelRooms(layout, openDoorIds, boundary, holes, s, width, height)
+  const region = labelRooms(layout, openOpeningIds, boundary, holes, s, width, height)
 
   const { grid, mask } = field
   const { rows, columns, cell_size_m: cell } = grid
@@ -104,7 +98,7 @@ export function buildCellMap({ layout, openDoorIds, boundary, holes, field, mpp 
  */
 function labelRooms(
   layout: Layout,
-  openDoorIds: ReadonlySet<string>,
+  openOpeningIds: ReadonlySet<string>,
   boundary: PixelPoint[],
   holes: PixelPoint[][],
   s: number,
@@ -128,7 +122,7 @@ function labelRooms(
   ctx.fill('evenodd')
 
   ctx.beginPath()
-  for (const [a, b] of barrierSegments(layout, openDoorIds)) {
+  for (const [a, b] of barrierSegments(layout, openOpeningIds)) {
     ctx.moveTo(a.x, a.y)
     ctx.lineTo(b.x, b.y)
   }
@@ -161,8 +155,8 @@ function labelRooms(
   return region
 }
 
-/** Walls minus the open doors on them; windows stay part of the wall. */
-function barrierSegments(layout: Layout, openDoorIds: ReadonlySet<string>): [PixelPoint, PixelPoint][] {
+/** Walls minus the open doors and windows on them. */
+function barrierSegments(layout: Layout, openOpeningIds: ReadonlySet<string>): [PixelPoint, PixelPoint][] {
   const segments: [PixelPoint, PixelPoint][] = []
   for (const wall of layout.walls) {
     const dx = wall.end.x - wall.start.x
@@ -171,8 +165,8 @@ function barrierSegments(layout: Layout, openDoorIds: ReadonlySet<string>): [Pix
     if (lengthSq === 0) continue
     const at = (t: number): PixelPoint => ({ x: wall.start.x + dx * t, y: wall.start.y + dy * t })
     const param = (p: PixelPoint) => ((p.x - wall.start.x) * dx + (p.y - wall.start.y) * dy) / lengthSq
-    const gaps = layout.doors
-      .filter((d) => d.wall_id === wall.id && openDoorIds.has(d.id))
+    const gaps = [...layout.doors, ...layout.windows]
+      .filter((d) => d.wall_id === wall.id && openOpeningIds.has(d.id))
       .map((d) => [Math.min(param(d.start), param(d.end)), Math.max(param(d.start), param(d.end))])
       .sort((a, b) => a[0] - b[0])
     let cursor = 0
@@ -186,7 +180,7 @@ function barrierSegments(layout: Layout, openDoorIds: ReadonlySet<string>): [Pix
 }
 
 /** Sum over channels (or one channel) at time index t, per cell. */
-function cellValues(field: SimulationField, t: number, channel: number | null, out: Float32Array) {
+export function cellValues(field: SimulationField, t: number, channel: number | null, out: Float32Array) {
   const { rows, columns } = field.grid
   const cells = rows * columns
   const channels = field.placementIds.length
@@ -211,28 +205,48 @@ export function fieldMax(field: SimulationField, channel: number | null): number
   return max
 }
 
-/** The frame as an image the size of the cell map, covering the whole plan. */
+/**
+ * The frame as an image the size of the cell map, covering the whole plan.
+ * Each diffuser's scent has its own colour (channelColors, in channel order);
+ * a cell mixes them in proportion to each one's share of the concentration.
+ */
 export function renderFrame(
   field: SimulationField,
   map: CellMap,
   t: number,
   channel: number | null,
   max: number,
+  channelColors: Rgb[],
 ): HTMLCanvasElement {
   const { rows, columns } = field.grid
-  const values = new Float32Array(rows * columns)
-  cellValues(field, t, channel, values)
+  const cells = rows * columns
+  const channels = field.placementIds.length
+  const base = t * channels * cells
 
   // One packed RGBA colour per cell (ImageData is little-endian RGBA).
-  const colours = new Uint32Array(values.length)
+  const colours = new Uint32Array(cells)
   const scale = max > 0 ? 1 / max : 0
-  for (let i = 0; i < values.length; i++) {
+  for (let i = 0; i < cells; i++) {
     if (!field.mask[i]) continue
-    const level = Math.log1p(LOG_K * values[i] * scale) / Math.log1p(LOG_K)
+    let total = 0
+    let r = 0
+    let g = 0
+    let b = 0
+    for (let c = 0; c < channels; c++) {
+      if (channel !== null && c !== channel) continue
+      const v = field.concentration[base + c * cells + i]
+      if (v <= 0) continue
+      const [cr, cg, cb] = channelColors[c]
+      total += v
+      r += cr * v
+      g += cg * v
+      b += cb * v
+    }
+    const level = Math.log1p(LOG_K * total * scale) / Math.log1p(LOG_K)
     if (level <= 0.01) continue
-    const [r, g, b] = rampAt(level)
+    const [sr, sg, sb] = scentShade([r / total, g / total, b / total], Math.min(1, level))
     const a = Math.round(255 * MAX_ALPHA * Math.min(1, level * 1.4))
-    colours[i] = ((a << 24) | (Math.round(b) << 16) | (Math.round(g) << 8) | Math.round(r)) >>> 0
+    colours[i] = ((a << 24) | (Math.round(sb) << 16) | (Math.round(sg) << 8) | Math.round(sr)) >>> 0
   }
 
   const canvas = document.createElement('canvas')
@@ -249,15 +263,3 @@ export function renderFrame(
   ctx.putImageData(image, 0, 0)
   return canvas
 }
-
-function rampAt(level: number): [number, number, number] {
-  const x = Math.min(1, Math.max(0, level)) * (RAMP.length - 1)
-  const i = Math.min(RAMP.length - 2, Math.floor(x))
-  const f = x - i
-  const a = RAMP[i]
-  const b = RAMP[i + 1]
-  return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f]
-}
-
-/** CSS gradient of the colour ramp, for the legend. */
-export const RAMP_GRADIENT = `linear-gradient(90deg, ${RAMP.map(([r, g, b], i) => `rgba(${r}, ${g}, ${b}, ${(MAX_ALPHA * (0.35 + (0.65 * i) / (RAMP.length - 1))).toFixed(2)}) ${Math.round((100 * i) / (RAMP.length - 1))}%`).join(', ')})`

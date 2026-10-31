@@ -4,33 +4,72 @@
   min-height: 100%;
 }
 
+/* One slim row: logo, wordmark, then the steps, all from the left. Same
+   background as the page below; only a thin line separates them. */
 .topbar {
   display: flex;
-  align-items: baseline;
-  gap: 24px;
-  padding: 14px 24px;
+  align-items: stretch;
+  gap: 40px;
+  height: var(--topbar-h);
+  padding: 0 24px;
   border-bottom: 1px solid var(--border);
-  background: var(--surface);
 }
 
-.topbar h1 {
+/* Workspace: the plan's grid runs under a see-through header. The header has
+   nothing to click, so the plan stays draggable beneath it. */
+.app--overlay-header {
+  position: relative;
+}
+
+.app--overlay-header .topbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 3;
+  background: transparent;
+  pointer-events: none;
+}
+
+.topbar__brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   margin: 0;
-  font-size: 20px;
+  font-weight: inherit;
+}
+
+.topbar__mark {
+  width: 34px;
+}
+
+.topbar__wordmark {
+  /* Same serif as the home and intro pages. */
+  font-family: 'Cormorant Garamond', 'Times New Roman', serif;
+  font-size: 21px;
+  font-weight: 400;
+  line-height: 1;
+  letter-spacing: 0.2em;
 }
 
 .steps {
   display: flex;
-  gap: 16px;
+  gap: 8px;
   margin: 0;
   padding: 0;
   list-style: none;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: 14px;
 }
 
+/* The current step's underline sits on the header's bottom line. */
 .steps li {
-  padding-bottom: 2px;
+  display: flex;
+  align-items: center;
+  padding: 2px 10px 0;
   border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  white-space: nowrap;
 }
 
 .steps li.is-current {
@@ -41,6 +80,30 @@
 
 .steps li.is-done {
   color: var(--text);
+}
+
+/* Narrow screens: the steps move under the logo. */
+@media (max-width: 640px) {
+  .topbar {
+    flex-wrap: wrap;
+    gap: 0;
+    padding: 0 12px;
+  }
+
+  .topbar__brand {
+    width: 100%;
+    height: 36px;
+  }
+
+  .steps {
+    height: 40px;
+    gap: 0;
+    font-size: 13px;
+  }
+
+  .steps li {
+    padding: 0 6px;
+  }
 }
 
 .content {
@@ -265,7 +328,8 @@
 
 .setup-steps {
   display: flex;
-  gap: 14px;
+  flex-wrap: wrap;
+  gap: 6px 12px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -277,6 +341,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  white-space: nowrap;
 }
 
 .setup-steps__number {
@@ -515,8 +580,35 @@
 }
 
 .choices button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   padding: 3px 8px;
   font-size: 13px;
+}
+
+/* Scent colour dot on the scent buttons. */
+.swatch {
+  width: 10px;
+  height: 10px;
+  border: 1px solid rgba(31, 40, 30, 0.15);
+  border-radius: 50%;
+}
+
+/* Diffuser card: type icon in its scent colour, then the name. */
+.card__head {
+  flex-wrap: nowrap;
+}
+
+.card__glyph {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 1.5px solid;
+  border-radius: 12px;
+  background: #ffffff;
 }
 
 .choices button.is-selected {

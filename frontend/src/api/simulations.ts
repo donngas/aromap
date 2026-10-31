@@ -16,6 +16,21 @@ export interface MetricSegment {
 
 export interface MetricOpening extends MetricSegment {
   wall_id: string
+  /** Set when the client knows the side; the backend infers it otherwise. */
+  boundary_kind?: 'interior' | 'exterior'
+}
+
+/** Mirrors backend AirflowSettings; omitted means calm weather and no devices. */
+export interface AirflowSettings {
+  outdoor_conditions: 'calm' | 'moderate' | 'breezy'
+  wind_direction_degrees: number
+  devices: {
+    id: string
+    type: 'fan' | 'ac'
+    position_m: MetricPoint
+    direction_degrees: number
+    strength: 'low' | 'medium' | 'high'
+  }[]
 }
 
 /** Mirrors backend ConsumerDiffuserDefinition. */
@@ -48,6 +63,7 @@ export interface SimulationRequest {
     enabled: boolean
   }[]
   opening_states: { opening_id: string; is_open: boolean }[]
+  airflow: AirflowSettings
   /** Sampling is left automatic; the backend keeps it within its sample limit. */
   settings: { duration_s: number }
 }
@@ -100,6 +116,10 @@ const MESSAGES: Record<string, string> = {
   invalid_opening: '문이나 창의 위치를 읽을 수 없어요.',
   overlapping_openings: '겹쳐 있는 문이나 창이 있어 계산할 수 없어요.',
   unsupported_open_window: '창문을 연 상태는 아직 계산할 수 없어요.',
+  airflow_failed: '바람 흐름을 계산하지 못했어요. 선풍기·에어컨 위치나 공간 모양을 단순하게 바꿔 보세요.',
+  invalid_airflow_device: '선풍기나 에어컨이 벽 위나 실내 밖에 있어요. 조금 안쪽으로 옮겨 주세요.',
+  unresolved_exterior_opening: '바깥쪽 문이나 창의 위치를 실내 영역 가장자리에서 찾지 못했어요. 실내 영역을 확인해 주세요.',
+  ambiguous_exterior_opening: '열린 문이나 창이 바깥쪽인지 판단하기 어려워요. 그 문이나 창을 닫고 다시 시도해 주세요.',
   invalid_source: '디퓨저가 실내 밖이나 벽 위에 있어요. 위치를 조금 옮겨 주세요.',
   unresolved_source: '디퓨저가 벽에 너무 가까워요. 벽에서 조금 떨어뜨려 주세요.',
   no_sources: '디퓨저를 하나 이상 놓아 주세요.',
@@ -108,6 +128,10 @@ const MESSAGES: Record<string, string> = {
 }
 
 export function simulationErrorMessage(code: string, fallback?: string): string {
+  // The backend reports open inner windows with the general opening code.
+  if (code === 'invalid_opening' && fallback?.includes('interior window')) {
+    return '안쪽 벽에 있는 창문은 열 수 없어요. 그 창문을 닫고 다시 시도해 주세요.'
+  }
   return MESSAGES[code] ?? errorMessage(code, fallback)
 }
 

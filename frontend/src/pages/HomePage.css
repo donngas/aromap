@@ -42,23 +42,7 @@
 }
 
 .home__mark {
-  position: relative;
-  display: inline-block;
   width: 1.55em;
-}
-
-.home__mark img {
-  display: block;
-  width: 100%;
-  height: auto;
-}
-
-/* Sphere position in logo-mark.png (centre 82.3% / 78.4%, sprite 41px of 360px). */
-.home__mark .home__mark-sphere {
-  position: absolute;
-  left: 76.4%;
-  top: 69.3%;
-  width: 11.4%;
 }
 
 .home__wordmark {

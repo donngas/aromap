@@ -3,6 +3,7 @@
 // diffuser layouts on it. Objects that the backend also defines keep its
 // snake_case shapes so they can be submitted unchanged; the rest is camelCase.
 
+import { normalizeScent } from '../diffusers/scents.ts'
 import type { DiffuserDraft } from '../diffusers/types.ts'
 import type { Layout, PixelPoint } from '../floorPlan/layout.ts'
 
@@ -29,6 +30,8 @@ export interface Scenario {
   name: string
   placements: DiffuserPlacement[]
   opening_states: OpeningState[]
+  /** Fans and air conditioners, placed in the workspace like diffusers. */
+  airflow_devices: AirflowDevice[]
 }
 
 /**
@@ -47,6 +50,32 @@ export interface WallCalibration {
 export interface IndoorBoundary {
   boundary: PixelPoint[]
   holes: PixelPoint[][]
+}
+
+/** Mirrors backend simulations.models.AirflowDevice, positioned in image pixels. */
+export interface AirflowDevice {
+  id: string
+  type: 'fan' | 'ac'
+  position: PixelPoint
+  /** Direction the air blows toward, in degrees clockwise from image right (0 right, 90 down). */
+  direction_degrees: number
+  strength: AirflowStrength
+}
+
+export const AIRFLOW_STRENGTHS = ['low', 'medium', 'high'] as const
+export type AirflowStrength = (typeof AIRFLOW_STRENGTHS)[number]
+
+/** Backend AirflowSettings.devices max_length, per scenario. */
+export const MAX_AIRFLOW_DEVICES = 8
+
+export const OUTDOOR_CONDITIONS = ['calm', 'moderate', 'breezy'] as const
+export type OutdoorConditions = (typeof OUTDOOR_CONDITIONS)[number]
+
+/** Outside weather, mirroring backend AirflowSettings.outdoor_conditions and wind direction. */
+export interface Outdoor {
+  conditions: OutdoorConditions
+  /** Direction the wind travels toward, degrees clockwise from image right. */
+  wind_direction_degrees: number
 }
 
 /** Space setup runs in this order between the diffuser page and the workspace. */
@@ -80,6 +109,8 @@ export interface ProjectDocument {
   view: { wallThickness: number | null; showImage: boolean }
   /** Simulated duration for every scenario, so their results compare. */
   simulationHours: SimulationHours
+  /** Outside weather for every scenario. */
+  outdoor: Outdoor
   /** Furthest page reached, where "continue" resumes. */
   step: ProjectStep
 }
@@ -90,6 +121,7 @@ export function createScenario(name: string, from?: Scenario): Scenario {
     name,
     placements: from ? from.placements.map((p) => ({ ...p, id: crypto.randomUUID() })) : [],
     opening_states: from ? from.opening_states.map((s) => ({ ...s })) : [],
+    airflow_devices: from ? from.airflow_devices.map((d) => ({ ...d, id: crypto.randomUUID() })) : [],
   }
 }
 
@@ -110,6 +142,7 @@ export function createProject(plan: ProjectDocument['plan']): ProjectDocument {
     indoor: null,
     view: { wallThickness: null, showImage: true },
     simulationHours: 1,
+    outdoor: { conditions: 'calm', wind_direction_degrees: 0 },
     step: 'diffusers',
   }
 }
@@ -121,14 +154,18 @@ export function createProject(plan: ProjectDocument['plan']): ProjectDocument {
 export function normalizeProject(doc: ProjectDocument): ProjectDocument {
   const calibration = doc.calibration ?? null
   const indoor = doc.indoor ?? null
-  let step = doc.step
+  // A setup step that no longer exists resumes at the workspace.
+  let step: ProjectStep = (SETUP_STEPS as readonly string[]).includes(doc.step) || doc.step === 'diffusers' ? doc.step : 'workspace'
   if (!doc.recognition) step = 'diffusers'
   else if (step === 'workspace' || step === 'indoor') {
     if (!calibration) step = 'calibration'
     else if (step === 'workspace' && !indoor) step = 'indoor'
   }
   const simulationHours = SIMULATION_HOURS.includes(doc.simulationHours) ? doc.simulationHours : 1
-  return { ...doc, calibration, indoor, simulationHours, step }
+  const outdoor = doc.outdoor ?? { conditions: 'calm', wind_direction_degrees: 0 }
+  const scenarios = doc.scenarios.map((s) => ({ ...s, airflow_devices: s.airflow_devices ?? [] }))
+  const diffusers = doc.diffusers.map((d) => ({ ...d, scentFamily: normalizeScent(d.scentFamily) }))
+  return { ...doc, calibration, indoor, simulationHours, outdoor, scenarios, diffusers, step }
 }
 
 /** Next unused "배치안 N" name. */
