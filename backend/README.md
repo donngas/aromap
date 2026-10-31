@@ -1,83 +1,294 @@
 # Aromap backend
 
-FastAPI backend with domain packages. This is groundwork: models are draft
-contracts, not a finished API or simulation implementation. Floor-plan recognition
-has an initial OpenCV implementation; no domain endpoints, solver, job runner,
-storage provider, or AI provider exist yet.
+FastAPI processes operation-specific inputs. The browser owns editable projects,
+local persistence, save-format versions, and JSON export/import. There is no backend
+`ProjectDocument` or project CRUD API. SQLite tracks temporary uploads and jobs;
+images and recognition results live on the same local volume.
 
-## Local development
+## Run
 
-Use Python 3.12+ and uv from this directory:
+From `backend/`:
 
 ```sh
 uv sync --locked
 uv run uvicorn app.main:app --reload
+uv run pytest -q
 ```
 
-The root Compose configuration also builds this service. FastAPI's generated
-documentation is available at `/docs`; no domain routes are registered yet.
+Use **one API process**. The local queue is not shared across API replicas/workers.
+Recognition runs in one spawned child process, with up to four waiting jobs.
+The backend service can also run from the repository root:
 
-## Modules and dependencies
+```sh
+docker compose up --build backend
+```
 
-| Package | Owns | Main models |
+The default Compose target installs development dependencies and enables reload
+for mounted `app/` source. Run tests in that environment with:
+
+```sh
+docker compose run --rm --no-deps backend uv run --locked pytest -q
+```
+
+For production-style staging without reload, development dependencies, or source
+mounts:
+
+```sh
+docker compose -p aromap-staging -f compose.yaml -f compose.staging.yaml up --build backend
+```
+
+Both modes publish `${BACKEND_PORT:-8000}` on `${HOST_BIND:-127.0.0.1}`. Swagger
+remains directly accessible on that host port. `/health` returns `{"status":"ok"}`
+after initialization and checks SQLite connectivity; it does not require a
+recognition provider. Compose uses this endpoint for backend readiness.
+
+Compose mounts `backend-data` at `/data`, retaining SQLite and files across container
+recreation. Staging's separate project name gives it a separate volume. Running
+`down -v` with the corresponding Compose/project arguments deletes that volume. API documentation and
+schemas are at `/docs` and `/openapi.json`.
+
+Recognition is unavailable by default. The entry point now delegates to an OpenCV
+implementation; enable it with
+`AROMAP_RECOGNITION_CALLABLE=app.floor_plans.recognition.interface:recognize_floor_plan`
+and restart. No mock recognition is served by production endpoints.
+
+## Configuration
+
+Environment variables (or `Settings` in tests):
+
+For Compose, these can be set in the repository root `.env` (the data directory
+remains `/data`); see root `.env.example`. A blank CORS setting in Compose derives
+localhost/127.0.0.1 origins from `FRONTEND_PORT`. For local uv execution, export
+settings in the shell; `.env` is not
+automatically loaded by the application.
+
+| Variable | Default | Meaning |
 | --- | --- | --- |
-| `floor_plans` | Uploaded reference image, editable geometry, calibration, recognition draft | `FloorPlan`, `Layout`, `Wall`, `DoorOpening`, `WindowOpening`, `ScaleCalibration`, `RecognitionDraft` |
-| `diffusers` | User definitions, future example profiles, emission assumptions | `DiffuserDefinition`, `RelativeEmissionProfile` |
-| `projects` | Portable document, scenario editing contracts, future schema migrations | `ProjectDocument`, `Scenario`, `OpeningState`, `DiffuserPlacement`, `EnvironmentalConditions`, `SimulationSettings` |
-| `simulations` | Resolve inputs, prepare grid, run model, describe results | `SimulationInput`, `SimulationGeometry`, `EmissionSource`, `SimulationResult` |
-| `advice` | On-demand suggestions referring to explicit project/scenario state | `AdviceRequest`, `Suggestion`, `AdviceResponse` |
-| `infrastructure` | Future temporary artifact storage and process execution | `JobStatus` |
+| `AROMAP_DATA_DIR` | `.data` relative to working directory | SQLite, uploads, results; `/data` in Compose |
+| `AROMAP_CORS_ORIGINS` | `http://localhost:5173` | Comma-separated allowed frontend origins |
+| `AROMAP_MAX_UPLOAD_BYTES` | `10485760` | 10 MiB per image |
+| `AROMAP_MAX_IMAGE_PIXELS` | `20000000` | Maximum decoded width × height |
+| `AROMAP_RETENTION_SECONDS` | `86400` | Upload retention and terminal-job/result retention |
+| `AROMAP_CLEANUP_INTERVAL_SECONDS` | `60` | Periodic expired-resource cleanup |
+| `AROMAP_QUEUE_CAPACITY` | `4` | Waiting recognitions, in addition to one running job |
+| `AROMAP_RECOGNITION_CALLABLE` | unset | Operator-configured importable recognition function |
 
-`projects` composes floor-plan and diffuser models. `advice` accepts a project
-snapshot. Simulation preparation will translate projects into resolved simulation
-inputs; the engine must not depend on the project document, FastAPI, database
-sessions, or artifact storage. Geometry primitives are currently shared through
-`floor_plans`. Infrastructure executes domain work without owning its rules.
+The storage root contains `registry.sqlite3`, `uploads/<image_id>/image.png`, and
+`results/<job_id>.json`. Public IDs are randomly generated; client filenames never
+choose filesystem locations. No login is required: anyone holding a resource ID
+can access it until expiry. These endpoints are temporary resources, not cloud saves.
 
-Keep future routers, request/response schemas, services, and repositories inside
-their owning domain as needed. No global layer directories or generic repository
-framework are required. `recognition/` and `simulations/engine/` reserve implementation
-boundaries; provider interfaces should follow concrete integration needs.
+## Frontend contract
 
-## Document and model relationships
+### Upload
 
-```text
-ProjectDocument (schema_version)
-  floor_plan
-    reference_image (optional, embedded)
-    layout (id, revision)
-      walls / doors / windows / optional room labels
-      optional scale calibration
-  diffuser_definitions[]
-  scenarios[]
-    placements[] -> diffuser definition IDs
-    opening_states[] -> door/window IDs
-    environmental conditions
-    simulation settings
-  active_scenario_id -> scenario ID
+`POST /api/floor-plans/uploads`, `multipart/form-data`, field **`image`**.
+Accept PNG, JPEG, or WebP; reject animation. Validate actual decoded format rather
+than trusting the filename or declared MIME type. Normalize EXIF orientation,
+strip metadata, and return a prepared PNG without resizing. The dimensions and all
+recognized coordinates refer to this prepared image, not the original file.
+
+```javascript
+const body = new FormData();
+body.append("image", file);
+const response = await fetch(`${apiBase}/api/floor-plans/uploads`, {
+  method: "POST", body,
+}); // Let the browser set Content-Type and its multipart boundary.
+if (!response.ok) throw await response.json();
+const uploaded = await response.json();
 ```
 
-A definition describes a diffuser; a placement is one instance with a position,
-optional strength override, and enabled state. Example and user profiles will
-resolve through the same path. Initial emission profiles are constant and relative;
-example values and scientific defaults have intentionally not been chosen.
+`201 Created`:
 
-All scenarios currently share the project's current layout and definitions. A
-layout edit therefore affects future runs of every scenario. Past runs retain a
-complete resolved snapshot. Independent layouts per scenario can be added later
-if comparisons require them.
+```json
+{
+  "image_id": "opaque-image-id",
+  "image_url": "/api/floor-plans/uploads/opaque-image-id/image",
+  "width_px": 1600,
+  "height_px": 1000,
+  "media_type": "image/png",
+  "expires_at": "2026-11-01T09:00:00Z"
+}
+```
 
-Editable geometry uses image pixels with a top-left origin, x rightward and y
-downward. Calibration maps a nonzero pixel segment to a distance in meters.
-Draft layouts may be uncalibrated; simulation preparation must reject them.
+`GET /api/floor-plans/uploads/{image_id}/image` returns PNG bytes with
+`Cache-Control: no-store`. Resolve returned paths against the backend origin when
+FE and BE use different origins. The frontend should retain the prepared image in
+IndexedDB for editing/export, rather than depend on an expiring URL. Upload success
+does not start recognition.
 
-`PixelPoint` (`floor_plans/models.py`) is used for editable walls, openings,
-labels, calibration endpoints, and diffuser placements. `MetricPoint`
-(`simulations/models.py`) is used for resolved walls, openings, and emission
-sources. Both serialize as `{ "x": ..., "y": ... }`; their containing schemas
-establish the units. There is no automatic conversion between these types.
+The file-byte and pixel limits are independent. The total multipart request is
+also bounded to the file limit plus 1 MiB of envelope overhead, including chunked
+requests. Missing/wrong fields return the standard validation error below.
 
-Simulation preparation will compute a uniform scale from calibration:
+### Recognition
+
+`POST /api/floor-plans/recognitions`, JSON:
+
+```json
+{ "image_id": "opaque-image-id" }
+```
+
+`202 Accepted` (only when a provider is enabled):
+
+```json
+{
+  "job_id": "opaque-job-id",
+  "status_url": "/api/floor-plans/recognitions/opaque-job-id"
+}
+```
+
+Until provider integration, this returns **503 `recognition_unavailable`** and
+creates no job. Queue saturation returns **429 `queue_full`**; retry later.
+
+`GET /api/floor-plans/recognitions/{job_id}` returns `200` with status and an inline,
+typed result. Poll roughly once per second and stop at a terminal state.
+
+```json
+{
+  "job_id": "opaque-job-id",
+  "state": "succeeded",
+  "created_at": "2026-10-31T09:00:00Z",
+  "updated_at": "2026-10-31T09:00:02Z",
+  "expires_at": "2026-11-01T09:00:02Z",
+  "result": {
+    "floor_plan": {
+      "layout": {
+        "id": "recognized-layout-id",
+        "revision": 1,
+        "width_px": 1600,
+        "height_px": 1000,
+        "walls": [],
+        "doors": [],
+        "windows": [],
+        "room_labels": [],
+        "calibration": null
+      },
+      "reference_image": null
+    },
+    "warnings": ["Example of an empty detection; manual correction needed."]
+  },
+  "error": null
+}
+```
+
+States: `queued → running → succeeded / failed`. `result` is null except on success;
+`error` is null except on failure, when it contains `{ "code": "...", "message": "..." }`.
+A processing failure is a successfully retrieved job status (`200`, `state=failed`),
+not an HTTP 500. The example above illustrates the schema, not actual recognition.
+
+Frontend associates a job with its submitted image, attaches the locally retained
+reference image to returned geometry, and asks before replacing existing edits.
+Recognition does not return opening states or calibration. Upload/job IDs stay in
+runtime state, outside portable frontend saves.
+
+### Errors
+
+```json
+{ "detail": { "code": "invalid_image", "message": "The image could not be decoded or prepared." } }
+```
+
+| HTTP status | Codes / meaning |
+| --- | --- |
+| 404 | `image_not_found`, `job_not_found`: unknown or expired resource |
+| 413 | `image_too_large`: bytes, pixels, or request envelope exceeds limits |
+| 415 | `unsupported_image`, `animated_image` |
+| 422 | `invalid_image`, `invalid_request` |
+| 429 | `queue_full` |
+| 503 | `recognition_unavailable` |
+| 500 | `result_unavailable`, `internal_error` |
+
+Provider exceptions are logged server-side; jobs expose a generic
+`recognition_failed` error without paths or exception details. Invalid request
+fields use the same error envelope, including FastAPI validation failures.
+
+## Jobs, expiry, and restart behavior
+
+Currently only recognition jobs are submitted. Uploads and image retrieval are
+not jobs. Simulation can reuse lifecycle infrastructure later; no simulation or
+advice endpoint is implemented yet.
+
+SQLite stores upload metadata and job kind/state, input image reference,
+creation/update/expiry timestamps, result reference, and error details. It never
+stores user projects or image bytes. Database transactions finish before computation.
+
+The queue is bounded and in memory, not a durable broker. Shutdown/startup marks
+unfinished jobs `failed` with `job_interrupted`; there are no automatic retries or
+resumption. Graceful shutdown waits for an executing child process to finish, but
+may discard its result and mark the job interrupted. A provider that hangs requires
+operator intervention; hard execution timeouts are not implemented yet.
+
+Uploads expire 24 hours after creation by default. Jobs receive a fresh retention
+window at completion. Active jobs remain pollable past their provisional expiry;
+cleanup never removes their inputs. Files/metadata are retained internally while
+referenced by a surviving job even if the public upload URL has expired. Terminal
+jobs/results and unreferenced expired uploads are removed on startup and periodically.
+A successful browser save must not depend on any of these temporary resources.
+
+## Modules and models
+
+| Package | Owns | Contracts |
+| --- | --- | --- |
+| `floor_plans` | Image endpoints, preparation, recognition orchestration | `UploadedImage`, recognition DTOs, `RecognitionDraft`, `Layout` |
+| `floor_plans/recognition` | Image-to-editable-geometry implementation | Existing `Path → RecognitionDraft` boundary |
+| `diffusers` | Relative emission definitions and future examples | `DiffuserDefinition` |
+| `simulations` | Submitted configuration, metric preparation, engine/results | `SimulationConfiguration`, `SimulationInput`, `SimulationResult` |
+| `advice` | Future on-demand interpretation | `AdviceRequest.configuration`, `AdviceResponse` |
+| `infrastructure` | Local storage, SQLite, job execution, upload-body limit | Operational resources, not project ownership |
+
+Placements, opening states, conditions, and simulation settings now live in
+`simulations/models.py`. `Scenario` is replaced by `SimulationConfiguration`, which
+has no saved-scenario ID/name. The browser can compose these API data shapes into
+its own versioned project format; the backend has no import/export migrations.
+`FloorPlan`/`ReferenceImage` remain for compatibility with the handed-off recognition
+contract, but recognition returns `reference_image=None`.
+
+## Recognition handoff contract
+
+The authoritative callable and error contract remain in
+[`interface.py`](app/floor_plans/recognition/interface.py), and output models in
+[`models.py`](app/floor_plans/models.py):
+
+```python
+recognize_floor_plan(image_path: Path) -> RecognitionDraft
+```
+
+It delegates to the OpenCV pipeline in
+[`pipeline.py`](app/floor_plans/recognition/pipeline.py), which detects axis-aligned
+walls (solid or hollow line-drawn) and identifies doors and windows from wall gaps,
+swing arcs, and glazing lines. Other providers should live in sibling modules
+behind the same entry point.
+
+- Caller supplies an absolute path to a prepared image, retains it throughout the
+  call, and owns storage/cleanup. Recognition must not modify/delete the original.
+- Recognizer generates layout/geometry IDs and returns revision `1`, matching image
+  dimensions, `reference_image=None`, and `calibration=None`.
+- Internal resizing/rotation must map back to input image coordinates: top-left
+  origin, x rightward, y downward.
+- Walls are nonzero, zero-thickness segments split at every crossing and T-junction.
+  An X produces four segments; a T produces three. Connected segments share exact
+  endpoint coordinates, with no junction inside a returned segment.
+- Parent walls span their door/window openings. Each opening lies along and
+  references one final wall segment. Omit ambiguous openings with a warning rather
+  than emitting dangling references.
+- Wall IDs are unique within walls. Opening IDs are unique across doors/windows.
+  Frontend preserves IDs for surviving features; repeated recognition need not
+  reproduce the same IDs.
+- Return partial/empty geometry with warnings for incomplete/no detection. Raise
+  `RecognitionError` for unreadable images or processing failures.
+- Do not infer operating states, A/C/fans, airflow, or simulation grids.
+
+The executor checks basic output structure, dimensions, revision, and unset
+calibration/reference image. Full geometry/topology validation remains follow-up
+work; the model declarations do not enforce it yet.
+
+## Coordinates and future simulation flow
+
+`PixelPoint` is used for editable geometry, calibration endpoints, and placements.
+`MetricPoint` is used for resolved solver geometry and sources. Both serialize as
+`{ "x": ..., "y": ... }`; containing schemas define their units.
+
+Preparation will reject absent/zero-length calibration and convert uniformly:
 
 ```text
 meters_per_pixel = distance_m / hypot(end.x - start.x, end.y - start.y)
@@ -85,178 +296,38 @@ x_m = x_px * meters_per_pixel
 y_m = y_px * meters_per_pixel
 ```
 
-Apply this scale to all geometry, source positions, and layout dimensions before
-calling the engine. Reject zero-length calibration segments. Solver cell size
-is specified in meters independently of image resolution. This conversion assumes
-a uniformly scaled, undistorted plan; perspective images need rectification first.
-Frontend zoom/pan changes only display coordinates. Resampling the underlying
-image requires transforming geometry and calibration together.
-
-Doors and windows reference a wall and describe an opening segment along it.
-Their open/closed states belong to scenarios; unspecified states resolve to closed
-during simulation preparation. Closed doors leave the wall impermeable; open doors
-become connections. Window ventilation behavior is not yet defined; recognizing a
-window does not imply support for simulating its airflow. Room labels are
-annotations, not connectivity definitions.
-
-Resolved `SimulationGeometry` uses meters with the same axis directions. Its
-open doorways reference wall indices. The computational grid is derived data,
-never the editable source of truth. Its mask, indexing, and field artifact format
-remain to be designed together with the solver.
-
-Models currently enforce basic types and scalar ranges only. Services must later
-validate unique IDs, references, finite numeric values, calibration, wall/door
-and window topology, traversable source positions, compatible sample settings, and resource
-limits. Successful model construction does not mean a project is simulation-ready.
-
-## Recognition handoff contract
-
-The authoritative callable contract is in
-[`app/floor_plans/recognition/interface.py`](app/floor_plans/recognition/interface.py);
-the output schema and geometry conventions live in
-[`app/floor_plans/models.py`](app/floor_plans/models.py).
-The callable delegates to the OpenCV pipeline in
-[`app/floor_plans/recognition/pipeline.py`](app/floor_plans/recognition/pipeline.py),
-which detects axis-aligned walls plus doors and windows from gaps in them.
-Other providers should also live in sibling modules behind this entry point.
-
-```python
-from pathlib import Path
-
-from app.floor_plans.recognition.interface import recognize_floor_plan
-
-# Caller-provided absolute path; storage location is configurable.
-draft = recognize_floor_plan(Path("/tmp/aromap/uploads/example/source.png"))
-```
-
-| Side | Responsibility |
-| --- | --- |
-| Caller | Validate upload limits/format; normalize EXIF orientation; save the image; pass its absolute path; retain it throughout the call; attach reference image afterward; clean up storage |
-| Recognizer | Read image; detect walls, doors, windows; generate IDs; return `RecognitionDraft`; clean up its own intermediates |
-| Frontend / scenario | Correct geometry, calibrate scale, choose door/window states |
-| Simulation preparation | Validate final geometry and state references; resolve omitted states to closed; convert to metric solver input |
-
-The temporary path above is an example, not a required directory. The recognizer
-must not construct storage paths, look up upload IDs, modify/delete the original,
-or embed image bytes. It runs synchronously; the caller controls background/process
-execution and must keep CPU-heavy work outside the HTTP event loop.
-
-Returned drafts have input-image dimensions, layout revision `1`,
-`reference_image=None`, and `calibration=None`. Room labels may be empty. Any
-internal resize or rotation must be mapped back to the prepared input image.
-
-Geometry requirements:
-
-- Pixel coordinates use a top-left origin, x rightward and y downward.
-- Walls are nonzero, zero-thickness segments. Split every wall at crossings and
-  T-junctions: an X crossing produces four segments, a T-junction three. Connected
-  segments share identical endpoint coordinates; no junction remains inside a
-  returned wall segment.
-- Parent walls span their door/window openings. Opening endpoints lie on one
-  final wall segment and reference its ID after splitting. If recognition cannot
-  resolve an opening's parent unambiguously, omit that opening and warn rather
-  than returning a dangling reference.
-- Wall IDs are unique within walls; door/window IDs are unique across both opening
-  collections. IDs are assigned after topology normalization and retained during
-  frontend edits where the corresponding feature survives. Separate recognition
-  runs do not promise identical IDs.
-- Recognition returns geometry only, with no open/closed state, A/C or fan
-  configuration, inferred airflow, or computational grid.
-
-Incomplete recognition returns partial geometry with warnings; no detected
-geometry returns an empty layout with a warning. An unreadable image or processing
-failure raises `RecognitionError`. These are implementation requirements, not
-topology validators already supplied by the placeholder models.
-
-`OpeningState` in `app/projects/models.py` references an opening ID and explicitly
-sets `is_open`. Preparation must reject duplicate/unknown references. The old
-layout-level `DoorOpening.is_open` field has been removed: callers must put those
-values into scenario states. No legacy JSON migration is implemented in this draft
-schema. Open-window simulation policy remains follow-up work.
-
-## Planned pipeline
+Apply scale to all geometry, positions, and layout dimensions before invoking the
+engine. Metric coordinates retain the same axis directions. Grid cell size is in
+meters and independent of image resolution. Display zoom/pan changes no stored
+geometry; resampling the underlying image must transform calibration/geometry too.
+Perspective images require rectification before a uniform scale is meaningful.
 
 ```mermaid
 flowchart TD
-    Upload["Upload floor-plan image"] --> Recognition["floor_plans: recognize geometry"]
-    Recognition --> Edit["Browser: correct layout and calibrate scale"]
-    Diffusers["diffusers: user definitions and examples"] --> Project
-    Edit --> Project["projects: ProjectDocument and scenarios"]
-    Project <-->|"Browser save / load"| JSON["JSON export / import"]
-    Project --> Prepare["simulations: validate and resolve SimulationInput"]
-    Prepare --> Engine["simulations/engine: grid and 2D solver"]
-    Engine --> Result["SimulationResult and sampled fields"]
-    Result --> View["Browser: heatmap, playback, comparison"]
-    Project -->|"On request"| Advice["advice: suggestions with reasons"]
-    Result -.->|"Optional context"| Advice
+    Upload["Browser: upload image"] --> Prepared["Backend: prepared PNG and image ID"]
+    Prepared --> Recognition["Recognition job: Path to RecognitionDraft"]
+    Prepared --> Browser["Browser: retain image and editable configuration"]
+    Recognition --> Browser
+    Browser <-->|"Browser-owned"| Save["JSON export / import"]
+    Browser --> Simulation["Future: submit one simulation configuration"]
+    Simulation --> Metric["Validate and resolve metric SimulationInput"]
+    Metric --> Engine["Grid and 2D solver"]
+    Engine --> Result["Sampled fields and metadata"]
+    Result --> Playback["Browser: heatmap and playback"]
 ```
 
-Recognition and diffuser entry can happen in parallel. Infrastructure supports
-recognition and simulation with background jobs and temporary artifacts; saved
-projects remain browser-owned. The chart describes the planned flow.
+Future simulation requests carry a layout/calibration, definitions, placements,
+opening states, conditions, and settings for one configuration. They omit image
+bytes and inactive scenarios. Preparation validates references, resolves omitted
+opening states to closed, and records explicit assumptions in a detached input.
+Open doors connect spaces; windows are recognized now but open-window physical
+behavior is still undecided. No preparation/solver implementation is included yet.
 
-1. Upload an image and submit a recognition job. In parallel, the browser lets the
-   user enter diffuser definitions or choose examples.
-2. Recognition returns `RecognitionDraft`, including warnings. The user corrects
-   walls, doors, and windows and calibrates the scale. Recognition does not create the final
-   computational grid.
-3. The browser maintains a `ProjectDocument`. Users create/delete/move placements
-   and change scenario conditions in the interactive editor.
-4. Simulation preparation validates the selected scenario, resolves enabled
-   placements and strength multipliers into explicit emission rates, converts
-   geometry to meters, and produces a detached `SimulationInput` snapshot.
-5. Record its input fingerprint, solver version, explicit parameters, and assumptions.
-   The fingerprint algorithm and canonical serialization remain to be selected.
-   Treat this snapshot as immutable after submission; the current mutable Pydantic
-   models do not enforce deep immutability.
-6. A process runner builds a boundary-aware grid and executes a single 2D model:
-   diffusion/effective mixing, source emission, and ventilation represented as
-   removal. Walls block flux; open doors connect spaces. Numerical stability,
-   time-step selection, and cost limits belong to preparation/engine code.
-7. Store sampled fields as a temporary artifact. Return `SimulationResult` metadata
-   with sample times, its input snapshot, artifact ID, and diagnostics. The initial
-   contract assumes zero initial concentration and uniform removal/diffusivity;
-   record these assumptions explicitly. A 2D areal concentration uses relative
-   units per square meter, not a physical airborne concentration or scent rating.
-8. The browser retrieves fields and controls heatmap playback, slider, and legend.
-   Scrubbing time does not rerun the simulation. Compare scenarios using consistent
-   color scales. Fingerprints identify results that no longer match current edits.
-9. On explicit request, advice analyzes the selected project/scenario and optional
-   run. Verify that a supplied run matches the analyzed input before interpreting
-   it. Return reasons, limitations, and the input fingerprint with suggestions.
+Before frontend heatmap work, agree on result grid origin, dimensions, row/column
+order, blocked-cell encoding, sample times, concentration units, field format, and
+correlation with submitted edits. Advice similarly accepts explicit configuration
+context, not the browser's project document.
 
-Recognition and simulation share the job lifecycle `queued -> running ->
-succeeded / failed`, with domain-specific payloads and artifacts. HTTP handlers
-should submit work rather than run CPU-heavy computation in the event loop.
-Execution, status lookup, failure handling, artifact retrieval, and expiry are
-planned behavior; `JobStatus` only describes the initial contract.
-
-## Browser persistence and export
-
-No accounts or durable server-side project storage are planned for the MVP.
-The browser owns local persistence (preferably IndexedDB) and JSON export/import.
-The backend validates incoming data before processing it.
-
-Exports contain the versioned document and, when present, embedded reference image
-data. They must remain usable after temporary backend uploads/results expire.
-Large concentration arrays and temporary job/run references are excluded from the
-default document; imported projects can rerun simulations. Future document format
-changes should add explicit migrations and reject unsupported versions clearly.
-Temporary storage needs a defined TTL and cleanup policy before deployment.
-
-## Extensions and verification
-
-Improved recognition stays in `floor_plans`; calibrated products stay in
-`diffusers`. Furniture would extend geometry and obstacle preparation. Optimization
-can become a separate domain that generates scenarios and calls the engine.
-Room-specific targets can extend scenarios. Accounts/cloud saving can wrap the
-portable document without making the solver depend on persistence.
-
-Keep solver checks independent of recognition using `tests/fixtures/layouts/`.
-Future checks should cover closed-wall isolation, open-door transport, conservation
-without removal, expected decay with removal, source accounting, and resolution/
-time-step behavior. API and job integration tests can follow their implementations.
-
-Results represent approximate relative concentrations under stated assumptions.
-Floor plans alone do not determine real airflow, product emission chemistry, or
-perceived scent intensity.
+Results will represent approximate relative concentrations under stated assumptions,
+not accurate real airflow or perceived scent intensity. Test the future engine
+independently of recognition using predefined layouts under `tests/fixtures/layouts/`.

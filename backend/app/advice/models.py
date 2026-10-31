@@ -2,12 +2,11 @@
 
 from pydantic import BaseModel, Field
 
-from app.projects.models import ProjectDocument
+from app.simulations.models import SimulationConfiguration
 
 
 class AdviceRequest(BaseModel):
-    project: ProjectDocument
-    scenario_id: str
+    configuration: SimulationConfiguration
     input_fingerprint: str
     simulation_run_id: str | None = None
     question: str | None = None

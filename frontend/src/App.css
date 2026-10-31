@@ -1,0 +1,242 @@
+.app {
+  display: grid;
+  grid-template-columns: 400px 1fr;
+  height: 100%;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+}
+
+.panel__header {
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.panel__header h1 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.steps {
+  display: flex;
+  gap: 14px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.steps li.is-current {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.steps li.is-done {
+  color: var(--text);
+}
+
+.panel__footer {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: auto;
+  padding: 12px 20px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.section {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.section h2 {
+  margin: 0 0 10px;
+  font-size: 14px;
+}
+
+.section__body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.file-button {
+  display: inline-block;
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+
+.file-button input {
+  display: none;
+}
+
+.note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.note--error {
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--error-soft);
+  color: var(--error);
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.row--between {
+  justify-content: space-between;
+  flex-wrap: nowrap;
+}
+
+.diffusers {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  min-width: 0;
+}
+
+.card__name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.form-row--check {
+  cursor: pointer;
+}
+
+.form-row__label {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.choices button {
+  padding: 3px 8px;
+  font-size: 13px;
+}
+
+.choices button.is-selected {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.number-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.number-input input {
+  width: 90px;
+}
+
+.grow {
+  width: 100%;
+}
+
+.stage {
+  position: relative;
+  min-width: 0;
+  background: var(--stage);
+}
+
+.viewer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.viewer--drop {
+  outline: 3px dashed var(--accent);
+  outline-offset: -12px;
+}
+
+.viewer__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  cursor: grab;
+}
+
+.viewer__empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  text-align: center;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.viewer__empty p {
+  margin: 2px 0;
+}
+
+.viewer__toolbar {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+}
+
+@media (max-width: 760px) {
+  .app {
+    grid-template-columns: 1fr;
+    grid-template-rows: 60vh auto;
+  }
+
+  .stage {
+    grid-row: 1;
+  }
+
+  .panel {
+    border-right: none;
+    border-top: 1px solid var(--border);
+  }
+}
