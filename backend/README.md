@@ -238,6 +238,7 @@ runtime state, outside portable frontend saves.
 `result.floor_plan.layout.indoor_domain` is an estimated **pixel-coordinate**
 footprint for user review/correction, or `null` with a warning when unavailable.
 Its shape is `{ "boundary": [PixelPoint, ...], "holes": [[PixelPoint, ...], ...] }`.
+All indoor-domain vertex coordinates must be finite pixel values; NaN and infinity are rejected.
 Each ring has at least three ordered vertices and closes implicitly; the outer
 boundary may be concave (e.g. an L-shaped plan). Holes exclude areas such as outdoor
 courtyards, not ordinary rooms or internal walls. Initially there is one outer
@@ -304,14 +305,15 @@ pixel geometry and converts it to meters for the simulation request. Estimation
 implementation and the UI interaction remain follow-up work.
 Walls have IDs and metric `start`
 and `end`; doors/windows additionally reference a `wall_id`. Placement positions
-are explicitly `position_m`. Polygon validity, wall topology, source containment,
-and cost limits remain engine/preparation work; type/reference checks alone do
-not establish that a configuration is runnable.
+are explicitly `position_m`. The preparation library now checks polygon validity,
+wall/opening topology, source containment, and resource limits. It is not wired to
+the HTTP placeholder yet; API type/reference checks alone do not establish that a
+configuration is runnable.
 
 Settings require positive `duration_s` and exactly one of `sample_interval_s` or
-strictly increasing `sample_times_s` within the duration. Grid size and spreading/
-removal coefficients are optional hints pending engine defaults; no physics defaults
-are implied by omission. Full numerical assumptions will be recorded in results.
+strictly increasing `sample_times_s` within the duration. Omitted grid size resolves
+to **0.25 m (25 cm)**; requests can override it. Spreading/removal parameters still
+require explicit resolution; no physical defaults are implied by omission.
 
 Completed status will contain `SimulationResult` metadata:
 
@@ -348,6 +350,75 @@ backend input, not the current editor state.
 The placeholder endpoints do not execute, store snapshots, create queued work, or
 serve fake fields. No simulation DB schema/worker is installed in this change.
 
+## Simulation preparation (implemented; solver pending)
+
+The standalone entry points in `app/simulations/preparation.py` are:
+
+- `prepare_input(...)` returns a detached, serializable `SimulationInput` with a
+  resolved metric polygon/holes, walls, explicit opening states, ordered sources,
+  explicit sample times, grid size, parameters, versions, assumptions, and fingerprint.
+- `prepare_run(...)` additionally builds a `PreparedGrid` and estimates sampled
+  output bytes. Neither function touches HTTP, SQLite, jobs, or artifact files.
+
+The caller must supply a model version, a source resolver, and explicit spreading/
+removal parameters when they are absent from the request. Source resolution is
+injected as `resolve_source(definition, placement) -> ResolvedEmissionProfile`.
+It must handle strength/operating overrides and record assumptions. No consumer
+capacity-to-emission formula, operating schedule, or scientific default is invented
+by preparation. Constant resolved emission profiles are supported initially.
+
+Interval-based sampling includes zero and the duration, appending a final partial
+interval when needed; explicit sample timestamps are preserved. Numerical solver
+time steps remain a separate future decision. The fingerprint covers resolved
+input and versions, not client request IDs. FE input models are copied, so later
+editor/caller mutations do not alter the prepared snapshot.
+
+Grid code lives under `app/simulations/engine/`:
+
+```text
+PreparedGrid
+  origin_m, cell_size_m, rows, columns
+  active_mask[H,W]                  cell center inside domain, outside holes
+  active_index[H,W]                 compact row-major index, -1 outside
+  connections[E,2]                 undirected active-cell neighbor pairs
+  source_weights[]                 placement/definition IDs, indices, weights
+  warnings[]
+```
+
+The bounding rectangle rounds upward to cover the polygon; cell centers determine
+active cells. Connections consider right/down neighbors once (four-neighbor graph),
+exclude segments crossing outdoor areas/holes, and block intersections with walls.
+Open door segments are subtracted from their parent wall; closed openings remain
+barriers. Open windows are rejected until their physical behavior is defined.
+Walls must be split at junctions, and overlapping walls/openings are rejected.
+
+Each enabled placement initially maps to its containing active cell with weight 1.
+Sources outside usable space, on closed walls, without an active containing cell,
+or separated from that cell's center by a barrier are rejected rather than snapped
+across barriers. Disabled placements are excluded;
+source/channel order otherwise follows request order. `PreparedGrid.expand()` maps
+compact active-cell values back to rectangular arrays with zero outside the mask.
+Arrays prepared for the solver are read-only. No particle transport or flux/time
+calculation has been implemented.
+
+The 25 cm default is adjustable through the request or preparation caller. Warn on
+unrepresented/narrow doors, thin footprint regions, and center-classified area
+approximation. Finer geometry is not guaranteed accurate merely by smooth rendering;
+these are grid approximations, not a fitted mesh.
+
+`PreparationLimits` provides adjustable operational defaults: 100,000 bounding cells,
+600 samples, 16 enabled placements, 10,000 geometry elements (ring vertices plus
+segment endpoints), and 256 MiB estimated sampled payload. Sampled `EngineOutput`
+concentrations must use float32; solver working arrays may use higher precision. Estimates count float32
+concentration plus a boolean mask, not sparse-solver working memory or file overhead.
+Cost checks precede grid allocation and source resolution. Actual runtime/worker
+limits remain part of solver/job integration.
+
+`EngineOutput` defines the future `[T,P,H,W]` array boundary and diagnostics; there
+is no solver callable yet. Job execution, artifact encoding, and endpoint activation
+will follow the numerical implementation. Existing simulation endpoints still return
+their documented unavailable/not-found responses.
+
 ## Jobs, expiry, and restart behavior
 
 Currently only recognition jobs are submitted. Uploads and image retrieval are
@@ -369,6 +440,10 @@ window at completion. Active jobs remain pollable past their provisional expiry;
 cleanup never removes their inputs. Files/metadata are retained internally while
 referenced by a surviving job even if the public upload URL has expired. Terminal
 jobs/results and unreferenced expired uploads are removed on startup and periodically.
+Missing files are tolerated; individual filesystem failures are logged and retried.
+Unregistered upload/result files (including interrupted temporary writes) are pruned
+after one retention window of file age. Registered artifacts and pending job results
+are protected, and fresh uploads have time to finish registering.
 A successful browser save must not depend on any of these temporary resources.
 
 ## Modules and models
@@ -378,7 +453,7 @@ A successful browser save must not depend on any of these temporary resources.
 | `floor_plans` | Image endpoints, preparation, recognition orchestration | `UploadedImage`, recognition DTOs, `RecognitionDraft`, `Layout`, `PixelIndoorDomain` |
 | `floor_plans/recognition` | Image-to-editable-geometry implementation | Existing `Path → RecognitionDraft` boundary |
 | `diffusers` | Relative emission definitions and future examples | `DiffuserDefinition` |
-| `simulations` | Metric configuration and HTTP contracts, future engine/results | `SimulationRequest`, `SimulationStatus`, `SimulationResult`, provisional `SimulationInput` |
+| `simulations` | Metric contracts, resolved inputs, grid preparation; future solver | `SimulationRequest`, `SimulationInput`, `PreparedGrid`, `EngineOutput`, `SimulationResult` |
 | `advice` | Future on-demand interpretation | `AdviceRequest.configuration`, `AdviceResponse` |
 | `infrastructure` | Local storage, SQLite, job execution, upload-body limit | Operational resources, not project ownership |
 
@@ -459,9 +534,9 @@ The endpoint still returns `calibration: null`; actual calibration is frontend-o
    implement the estimated indoor domain; verify pixel geometry against prepared images.
 2. **Engine prototype:** start independently with predefined metric layouts and
    sources. Choose the numerical approach and validate boundaries and behavior.
-3. **Preparation:** refine provisional numerical details after the prototype;
-   implement the metric HTTP contract, resolve source assumptions,
-   validate inputs, and agree with FE on result alignment/playback metadata.
+3. **Preparation:** connect the implemented metric input/grid preparation to chosen
+   source-estimation policies and numerical parameters; refine details after the
+   prototype and agree with FE on artifact encoding.
 4. **Simulation delivery:** connect the placeholder routes to queued execution, sampled-field artifacts, result
    retrieval, and correlation with submitted configurations.
 5. **Advice and reliability:** add on-demand interpretation, execution limits,
@@ -517,7 +592,8 @@ placements, opening states, conditions, and settings for one configuration. They
 bytes and inactive scenarios. Preparation validates references, resolves omitted
 opening states to closed, and records explicit assumptions in a detached input.
 Open doors connect spaces; windows are recognized now but open-window physical
-behavior is still undecided. No preparation/solver implementation is included yet.
+behavior is still undecided. Metric/grid preparation is implemented independently;
+the solver and HTTP execution path remain pending.
 
 The HTTP contract now describes grid alignment, channel/time/array ordering,
 relative units, and request correlation; actual field encoding and numerical

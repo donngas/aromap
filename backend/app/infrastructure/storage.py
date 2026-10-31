@@ -1,9 +1,12 @@
 """Files and atomic artifact publication on a local Docker volume."""
 
+import errno
 import json
+import logging
 from pathlib import Path
 from uuid import uuid4
 
+logger = logging.getLogger(__name__)
 
 class LocalStorage:
     def __init__(self, root: Path):
@@ -30,4 +33,24 @@ class LocalStorage:
         path = self.path(relative_path)
         path.unlink(missing_ok=True)
         if path.parent.parent == self.root / "uploads":
-            path.parent.rmdir()
+            try:
+                path.parent.rmdir()
+            except OSError as exc:
+                if exc.errno not in (errno.ENOENT, errno.ENOTEMPTY):
+                    raise
+
+    def prune_orphans(self, referenced: set[str], older_than: float):
+        """Age grace protects uploads being written before their registry insert."""
+        candidates = list((self.root / "uploads").glob("*/*"))
+        candidates.extend((self.root / "results").glob("*"))
+        for path in candidates:
+            relative = path.relative_to(self.root).as_posix()
+            if relative in referenced or path.is_symlink() or not path.is_file():
+                continue
+            try:
+                if path.stat().st_mtime <= older_than:
+                    self.remove(relative)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                logger.exception("Could not remove orphan artifact %s; retrying later", relative)

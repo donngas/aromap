@@ -63,7 +63,10 @@ class Jobs:
                 "error_message='Processing was interrupted by a backend restart.' "
                 "WHERE state IN ('queued', 'running')", (time.time(),)
             )
-        self.cleanup()
+        try:
+            self.cleanup()
+        except OSError:
+            logger.exception("Artifact cleanup failed at startup; retrying next interval")
         if self.settings.recognition_callable:
             load_recognizer(self.settings.recognition_callable)
             self.executor = ProcessPoolExecutor(
@@ -181,8 +184,12 @@ class Jobs:
                 (now,),
             ).fetchall()
             for row in expired_jobs:
-                if row["result_path"]:
-                    self.storage.remove(row["result_path"])
+                try:
+                    if row["result_path"]:
+                        self.storage.remove(row["result_path"])
+                except OSError:
+                    logger.exception("Could not clean job %s; retrying later", row["id"])
+                    continue
                 db.execute("DELETE FROM jobs WHERE id=?", (row["id"],))
             # Keep image records/files while any unexpired/active job references them.
             expired_uploads = db.execute(
@@ -190,8 +197,19 @@ class Jobs:
                 "AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.image_id=u.id)", (now,)
             ).fetchall()
             for row in expired_uploads:
-                self.storage.remove(row["relative_path"])
+                try:
+                    self.storage.remove(row["relative_path"])
+                except OSError:
+                    logger.exception("Could not clean upload %s; retrying later", row["id"])
+                    continue
                 db.execute("DELETE FROM uploads WHERE id=?", (row["id"],))
+            referenced = {row["relative_path"] for row in db.execute("SELECT relative_path FROM uploads")}
+            for row in db.execute("SELECT id, result_path FROM jobs"):
+                # Protect results between file publication and the success update.
+                referenced.add(f"results/{row['id']}.json")
+                if row["result_path"]:
+                    referenced.add(row["result_path"])
+            self.storage.prune_orphans(referenced, now - self.settings.retention_seconds)
 
     async def periodic_cleanup(self):
         while True:
