@@ -7,13 +7,12 @@ Planned stack: React frontend and FastAPI backend, with approximate relative con
 - `backend/` — backend project root (Python, managed with uv).
 - `compose.yaml` — runs both services from the repository root.
 
-Only shared scaffolding is included so far. The Dockerfiles are development templates;
-application code and dependency manifests are intentionally left to each team lead.
+The backend provides image uploads and recognition job infrastructure. See
+[backend/README.md](backend/README.md) for setup, API contracts, and current scope.
 
 Before running, the frontend needs `package.json`, `package-lock.json`, and a `dev`
-script accepting `--host` and `--port`. The backend needs `pyproject.toml`, `uv.lock`,
-runtime dependencies including FastAPI and uvicorn, and an `app.main:app` entry point.
-Adjust the templates as those projects take shape.
+script accepting `--host` and `--port`. To run only the backend now, use
+`docker compose up --build backend`.
 
 Once both projects are populated:
 
