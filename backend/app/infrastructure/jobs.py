@@ -119,6 +119,8 @@ class Jobs:
                 result = RecognitionDraft.model_validate_json(
                     self.storage.path(row["result_path"]).read_text(encoding="utf-8")
                 )
+                # Keep the shared model intact; calibration is browser-owned.
+                result.floor_plan.layout.calibration = None
             except (OSError, ValueError):
                 raise api_error(500, "result_unavailable", "The recognition result is unavailable.")
         return {
