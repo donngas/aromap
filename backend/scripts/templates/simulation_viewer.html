@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aromap · simulation preview</title>
+<style>
+:root{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#162737;background:#eef2f3;font-size:14px}
+*{box-sizing:border-box}body{margin:0}main{max-width:1320px;margin:auto;padding:32px}
+header{display:flex;justify-content:space-between;gap:20px;align-items:center;margin-bottom:25px}
+.eyebrow{color:#49736c;text-transform:uppercase;font-size:11px;letter-spacing:2px;font-weight:750}h1{font-size:28px;letter-spacing:-.8px;margin:7px 0}p{margin:6px 0;color:#60727d;line-height:1.6}
+.badge{border:1px solid #a8c3bc;color:#35665b;border-radius:30px;padding:8px 14px;white-space:nowrap;font-size:12px}
+.layout{display:grid;grid-template-columns:minmax(0,1fr) 270px;gap:20px}.panel{background:white;border:1px solid #dce4e6;border-radius:15px;overflow:hidden}
+.stage-head{padding:17px 20px;display:flex;justify-content:space-between;align-items:center}.stage-head span{font-size:12px;color:#657c86}
+.canvas-wrap{background:#f8f7f3;position:relative;height:490px}canvas#plan{display:block;width:100%;height:100%}.hover{position:absolute;left:14px;bottom:12px;background:#ffffffde;color:#61736c;padding:7px 11px;border:1px solid #dfe5df;border-radius:7px;font:11px ui-monospace,monospace;pointer-events:none}
+.controls{padding:18px 20px}.play-row{display:flex;align-items:center;gap:13px}button,select{font:inherit;border:1px solid #cbd8da;border-radius:8px;padding:8px 12px;background:white;color:#193c43}button{cursor:pointer}button.primary{background:#1a625b;color:white;border-color:#1a625b;min-width:85px}input[type=range]{width:100%;accent-color:#26796a;cursor:pointer}.time{font:600 15px ui-monospace,monospace;min-width:110px}.slider{margin-top:15px}.time-labels{display:flex;justify-content:space-between;font-size:11px;color:#71818a;margin-top:2px}
+.legend{display:flex;align-items:center;gap:12px;margin-top:18px;font-size:11px;color:#60727d}.gradient{height:9px;flex:1;border-radius:6px}.legend-label{white-space:nowrap}.checks{display:flex;gap:18px;margin-top:16px;font-size:12px;color:#60727d;flex-wrap:wrap}.checks label{display:flex;gap:5px;align-items:center}.checks input{accent-color:#26796a}
+aside{padding:22px}.section-label{font-size:11px;text-transform:uppercase;letter-spacing:1.5px;color:#71818a;margin-bottom:15px}.stat{padding:0 0 17px;margin-bottom:17px;border-bottom:1px solid #e6edef}.stat .value{font-size:26px;letter-spacing:-1px;font-weight:650;margin:5px 0}.unit{font-size:11px;color:#71818a}.stat .label{color:#60727d;font-size:12px}.key{display:flex;gap:8px;align-items:center;margin:10px 0;color:#60727d;font-size:12px}.line{width:20px;height:3px;background:#d2dfd8}.line.open{background:#52e5ca}.dot{width:10px;height:10px;border:2px solid #233f43;background:#f5fff4;border-radius:50%}.foot{font-size:11px;color:#71818a;line-height:1.65;margin-top:20px}
+details{margin-top:20px;padding:18px 22px;background:#f8faf9;border:1px solid #dce4e6;border-radius:12px}summary{cursor:pointer;font-weight:600;font-size:13px}.notes{font-size:12px;line-height:1.7;color:#60727d}.notes li{margin:6px 0}.warning{color:#99602b}.notes h3{font-size:12px;color:#23464b;margin:18px 0 5px}.fingerprint{overflow-wrap:anywhere;font:10px ui-monospace,monospace}
+@media(max-width:850px){main{padding:18px}.layout{grid-template-columns:1fr}aside{display:grid;grid-template-columns:1fr 1fr;gap:15px}.canvas-wrap{height:420px}.stage-head span{display:none}h1{font-size:23px}header .badge{display:none}.play-row{flex-wrap:wrap}}
+</style>
+<main>
+<header><div><div class="eyebrow">Aromap / engine lab</div><h1 id="title"></h1><p>Computed diffusion. Exported snapshots. No server required.</p></div><div class="badge">Standalone simulation preview</div></header>
+<div class="layout">
+ <section class="panel">
+  <div class="stage-head"><strong id="channel-title">All placements · combined</strong><span id="grid-info"></span></div>
+  <div class="canvas-wrap"><canvas id="plan" aria-label="Concentration represented by a soft particle-density overlay"></canvas><div class="hover" id="hover">Move over the floor plan to inspect a cell</div></div>
+  <div class="controls">
+   <div class="play-row"><button class="primary" id="play">▶ Play</button><button id="reset" title="Return to the first snapshot">↺</button><div class="time" id="time"></div><select id="channel" aria-label="Placement channel"><option value="all">All placements</option></select><select id="speed" aria-label="Playback rate"><option value="5">5 frames / s</option><option value="10" selected>10 frames / s</option><option value="20">20 frames / s</option></select></div>
+   <input class="slider" id="frame" type="range" min="0" value="0" aria-label="Simulation snapshot">
+   <div class="time-labels"><span>0:00</span><span id="frame-count"></span><span id="end-time"></span></div>
+   <div class="legend"><span>0</span><div class="gradient" id="gradient"></div><span id="scale-max"></span><span class="legend-label">relative units / m²</span></div>
+   <div class="checks"><label><input type="checkbox" id="log">Log density scale</label><label><input type="checkbox" id="cells">Show grid</label><label><input type="checkbox" id="markers" checked>Placement labels</label></div>
+  </div>
+ </section>
+ <aside class="panel">
+  <div><div class="section-label">Current snapshot</div><div class="stat"><div class="label">Modeled quantity</div><div class="value" id="quantity"></div><div class="unit">relative units · selected channels</div></div><div class="stat"><div class="label">Average concentration</div><div class="value" id="average"></div><div class="unit">relative units / m² · indoor cells</div></div><div class="stat"><div class="label">Peak concentration</div><div class="value" id="peak"></div><div class="unit">relative units / m²</div></div></div>
+  <div><div class="section-label">Layout & assumptions</div><div class="key"><span class="line" style="background:#66766d"></span>Impermeable wall / boundary</div><div class="key"><span class="line open" style="background:#a3bdb0"></span>Open door</div><div class="key"><span class="dot"></span>Diffuser placement</div><p class="foot" id="parameters"></p><p class="foot">Denser, darker speckles represent higher concentration on a fixed scale. The soft overlay interpolates only between connected cells. Dots are display marks, not simulated particle trajectories.</p><p class="foot">Approximate relative concentrations under stated assumptions. These are not measured fragrance concentrations or perceived scent intensity.</p></div>
+ </aside>
+</div>
+<details><summary>Model assumptions, warnings & numerical diagnostics</summary><div class="notes" id="notes"></div></details>
+</main>
+<script type="application/json" id="simulation">__AROMAP_PAYLOAD__</script>
+<script>
+"use strict";
+const data=JSON.parse(document.getElementById('simulation').textContent);
+const $=id=>document.getElementById(id), [T,P,H,W]=data.shape, N=H*W;
+function decode(text){const raw=atob(text),bytes=new Uint8Array(raw.length);for(let i=0;i<raw.length;i++)bytes[i]=raw.charCodeAt(i);return bytes;}
+const bytes=decode(data.fields), view=new DataView(bytes.buffer), fields=new Float32Array(bytes.length/4);
+for(let i=0;i<fields.length;i++)fields[i]=view.getFloat32(i*4,true);
+const mask=decode(data.mask), active=mask.reduce((a,b)=>a+b,0), area=active*data.grid.cell**2;
+const format=v=>v===0?'0':Math.abs(v)<.001?v.toExponential(2):v.toLocaleString(undefined,{maximumFractionDigits:3});
+const clock=t=>`${Math.floor(t/60)}:${Math.floor(t%60).toString().padStart(2,'0')}`;
+$('title').textContent=data.title;document.title=`${data.title} · Aromap`;
+$('grid-info').textContent=`${W} × ${H} cells · ${data.grid.cell} m · ${format(area)} m²`;
+$('end-time').textContent=clock(data.times[T-1]);$('frame-count').textContent=`${T} snapshots`;$('frame').max=T-1;
+$('parameters').textContent=`Spreading: ${format(data.parameters.effective_diffusivity_m2_per_s)} m²/s. Removal: ${format(data.parameters.removal_rate_per_s*3600)} /hour. ${P} placement channel${P===1?'':'s'}.`;
+data.channels.forEach((c,i)=>{const option=document.createElement('option');option.value=i;option.textContent=`${c.placement_id} · ${c.definition_id}`;$('channel').append(option);});
+for(const [title,items] of [['Warnings',data.warnings],['Assumptions',data.assumptions],['Numerical diagnostics',data.diagnostics]]){if(!items.length)continue;const h=document.createElement('h3');h.textContent=title;$('notes').append(h);const ul=document.createElement('ul');if(title==='Warnings')ul.className='warning';items.forEach(text=>{const li=document.createElement('li');li.textContent=text;ul.append(li);});$('notes').append(ul);}
+const fingerprint=document.createElement('p');fingerprint.className='fingerprint';fingerprint.textContent=`Input fingerprint: ${data.fingerprint}`;$('notes').append(fingerprint);
+const canvas=$('plan'),ctx=canvas.getContext('2d'),offscreen=document.createElement('canvas');offscreen.width=W*4;offscreen.height=H*4;
+const pixelCtx=offscreen.getContext('2d'), image=pixelCtx.createImageData(W*4,H*4), total=new Float64Array(N);
+const neighborBytes=decode(data.neighbors),neighborView=new DataView(neighborBytes.buffer),neighbors=new Int32Array(N*4);
+for(let i=0;i<neighbors.length;i++)neighbors[i]=neighborView.getInt32(i*4,true);
+function density(value){let r=Math.min(1,Math.max(0,value/data.scaleMax));return $('log').checked?Math.log1p(99*r)/Math.log(100):r;}
+function localValue(n,x,y){const a=neighbors[n*4+(x<.5?0:1)],b=neighbors[n*4+(y<.5?2:3)],wx=a<0?0:Math.abs(x-.5)*2,wy=b<0?0:Math.abs(y-.5)*2;return (total[n]+(a<0?0:wx*total[a])+(b<0?0:wy*total[b]))/(1+wx+wy);}
+function random(seed){let x=Math.imul(seed+1,1597334677);x^=x>>>16;x=Math.imul(x,2246822519);return (x>>>0)/4294967296;}
+const activeCells=[];for(let n=0;n<N;n++)if(mask[n])activeCells.push(n);
+const speckles=Array.from({length:60000},(_,i)=>({n:activeCells[Math.floor(random(i*5)*activeCells.length)],x:random(i*5+1),y:random(i*5+2),threshold:random(i*5+3),radius:.35+random(i*5+4)*.55}));
+let transform={x:0,y:0,s:1},frame=0,playing=false,lastTick=0,hovered=null;
+function updateHover(){if(hovered===null)return;const {column,row}=hovered,n=row*W+column;$('hover').textContent=column<0||column>=W||row<0||row>=H||!mask[n]?'Outside the active indoor domain':`Cell ${column},${row} · ${format(total[n])} relative units/m²`;}
+function point(p){return [transform.x+(p.x-data.grid.origin.x)*transform.s,transform.y+(p.y-data.grid.origin.y)*transform.s];}
+function segment(a,b,color,width=2,dashed=false){ctx.beginPath();ctx.strokeStyle=color;ctx.lineWidth=width;ctx.setLineDash(dashed?[6,4]:[]);ctx.moveTo(...point(a));ctx.lineTo(...point(b));ctx.stroke();ctx.setLineDash([]);}
+function ring(points,color){ctx.beginPath();points.forEach((p,i)=>i?ctx.lineTo(...point(p)):ctx.moveTo(...point(p)));ctx.closePath();ctx.strokeStyle=color;ctx.lineWidth=2;ctx.stroke();}
+function render(){
+ const selection=$('channel').value, chosen=selection==='all'?null:Number(selection);total.fill(0);
+ for(let p=0;p<P;p++){if(chosen!==null&&p!==chosen)continue;const offset=(frame*P+p)*N;for(let n=0;n<N;n++)total[n]+=fields[offset+n];}
+ let peak=0;image.data.fill(0);for(let n=0;n<N;n++){if(!mask[n])continue;peak=Math.max(peak,total[n]);const col=n%W,row=Math.floor(n/W);for(let sy=0;sy<4;sy++)for(let sx=0;sx<4;sx++){const index=((row*4+sy)*W*4+col*4+sx)*4;image.data[index]=99;image.data[index+1]=150;image.data[index+2]=127;image.data[index+3]=Math.round(34*density(localValue(n,(sx+.5)/4,(sy+.5)/4)));}}
+ pixelCtx.putImageData(image,0,0);
+ const box=canvas.getBoundingClientRect(),dpr=Math.min(devicePixelRatio||1,2);canvas.width=Math.round(box.width*dpr);canvas.height=Math.round(box.height*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);
+ ctx.fillStyle='#f8f7f3';ctx.fillRect(0,0,box.width,box.height);
+ const planWidth=W*data.grid.cell,planHeight=H*data.grid.cell,s=Math.min((box.width-90)/planWidth,(box.height-85)/planHeight);transform={x:(box.width-planWidth*s)/2,y:(box.height-planHeight*s)/2,s};
+ ctx.save();ctx.beginPath();for(const polygon of [data.geometry.indoor_domain.boundary,...data.geometry.indoor_domain.holes]){polygon.forEach((p,i)=>i?ctx.lineTo(...point(p)):ctx.moveTo(...point(p)));ctx.closePath();}ctx.clip('evenodd');ctx.fillStyle='#fffefa';ctx.fillRect(0,0,box.width,box.height);
+ ctx.imageSmoothingEnabled=true;ctx.drawImage(offscreen,transform.x,transform.y,planWidth*s,planHeight*s);
+ const particleCount=Math.min(speckles.length,Math.ceil(area*s*s*.1));
+ for(let i=0;i<particleCount;i++){const dot=speckles[i],r=density(localValue(dot.n,dot.x,dot.y));if(dot.threshold>r||r===0)continue;const x=transform.x+(dot.n%W+dot.x)*data.grid.cell*s,y=transform.y+(Math.floor(dot.n/W)+dot.y)*data.grid.cell*s;ctx.beginPath();ctx.arc(x,y,dot.radius,0,Math.PI*2);ctx.fillStyle=`rgba(48,115,87,${.10+.28*r})`;ctx.fill();}
+ ctx.restore();
+ if($('cells').checked){ctx.strokeStyle='#788e7320';ctx.lineWidth=.5;for(let x=0;x<=W;x++){const px=transform.x+x*data.grid.cell*s;ctx.beginPath();ctx.moveTo(px,transform.y);ctx.lineTo(px,transform.y+planHeight*s);ctx.stroke();}for(let y=0;y<=H;y++){const py=transform.y+y*data.grid.cell*s;ctx.beginPath();ctx.moveTo(transform.x,py);ctx.lineTo(transform.x+planWidth*s,py);ctx.stroke();}}
+ ring(data.geometry.indoor_domain.boundary,'#66766d');data.geometry.indoor_domain.holes.forEach(h=>ring(h,'#66766d'));
+ data.geometry.walls.forEach(w=>segment(w.start,w.end,'#66766d',3));
+ data.geometry.openings.forEach(o=>{if(o.is_open){segment(o.start,o.end,'#fffefa',6);segment(o.start,o.end,'#a3bdb0',1.5,true);}else if(o.kind==='window')segment(o.start,o.end,'#80a9a3',4);});
+ data.sources.forEach(source=>{const i=data.channels.findIndex(c=>c.placement_id===source.placement_id),selected=chosen===null||chosen===i;const [x,y]=point(source.position_m);ctx.globalAlpha=selected?1:.35;ctx.beginPath();ctx.arc(x,y,6,0,Math.PI*2);ctx.fillStyle='#fffefa';ctx.fill();ctx.lineWidth=2;ctx.strokeStyle='#3e7764';ctx.stroke();if($('markers').checked){ctx.font='600 11px system-ui';const label=source.placement_id,width=ctx.measureText(label).width+12;ctx.fillStyle='#fffefae8';ctx.fillRect(x-width/2,y-28,width,18);ctx.fillStyle='#3c6152';ctx.textAlign='center';ctx.fillText(label,x,y-15);}ctx.globalAlpha=1;});
+ ctx.fillStyle='#8fa6b4';ctx.font='11px system-ui';ctx.textAlign='left';ctx.fillText(`${format(planWidth)} m`,transform.x+planWidth*s/2-12,transform.y+planHeight*s+23);
+ const quantity=chosen===null?data.quantities[frame].reduce((a,b)=>a+b,0):data.quantities[frame][chosen];
+ $('quantity').textContent=format(quantity);$('average').textContent=format(quantity/area);$('peak').textContent=format(peak);$('time').textContent=clock(data.times[frame]);$('frame').value=frame;
+ $('channel-title').textContent=chosen===null?'All placements · combined':`Placement ${data.channels[chosen].placement_id}`;
+ $('scale-max').textContent=`${data.dataMax>data.scaleMax?'≥ ':''}${format(data.scaleMax)}`;
+ $('gradient').style.background='linear-gradient(to right,#fffefa,#e3ede3,#a3c1ab,#4c8c6d)';
+ updateHover();
+}
+function pause(){playing=false;$('play').textContent='▶ Play';}
+$('play').onclick=()=>{if(playing){pause();return;}if(frame===T-1)frame=0;playing=true;lastTick=0;$('play').textContent='Ⅱ Pause';};
+$('reset').onclick=()=>{pause();frame=0;render();};$('frame').oninput=()=>{pause();frame=Number($('frame').value);render();};
+for(const id of ['channel','log','cells','markers'])$(id).onchange=render;
+canvas.onmousemove=event=>{const box=canvas.getBoundingClientRect();hovered={column:Math.floor(((event.clientX-box.left-transform.x)/transform.s)/data.grid.cell),row:Math.floor(((event.clientY-box.top-transform.y)/transform.s)/data.grid.cell)};updateHover();};
+canvas.onmouseleave=()=>{hovered=null;$('hover').textContent='Move over the floor plan to inspect a cell';};
+function tick(now){if(playing&&now-lastTick>=1000/Number($('speed').value)){lastTick=now;frame=Math.min(T-1,frame+1);render();if(frame===T-1)pause();}requestAnimationFrame(tick);}
+new ResizeObserver(render).observe(canvas.parentElement);render();requestAnimationFrame(tick);
+</script>
+</html>

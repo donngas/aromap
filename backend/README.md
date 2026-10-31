@@ -534,6 +534,41 @@ corrections remain 1 until supported product data exists; directional airflow wi
 add a separate transport operator. The general sparse LU solve supports asymmetric
 operators, but no fan/A/C airflow field or advection term is implemented now.
 
+### Standalone visual preview
+
+Generate a portable HTML file directly from a metric configuration, without a
+running API, React, browser uploads, or extra Python dependencies. From `backend/`:
+
+```sh
+uv run --locked python -m scripts.preview_simulation \
+  --input tests/fixtures/layouts/open_door.json \
+  --output .data/previews/open_door.html --scale-max 8
+```
+
+Open the generated HTML in a browser. It embeds its own geometry, float32 snapshots,
+and active mask, with no external scripts, fonts, network calls, or adjacent-file
+fetches. Play/pause, scrub time, select a placement or combined concentration, inspect
+cell values, and toggle grid/log density. A plain background, soft single-hue haze,
+and fine seeded speckles represent concentration; the marks are not particle
+trajectories. Display interpolation uses only connected neighbors, preserving
+closed walls and excluded regions. Numeric values remain untransformed. Display
+limits remain fixed across time and channels; use the same `--scale-max` and log
+setting across files for fair comparisons. Saturated density retains true values in
+the numeric inspector. The viewer is a development aid, not the production field
+encoding or a second editor.
+
+Input accepts `SimulationConfiguration` or the request shape with `client_request_id`.
+The JSON input cap is 2 MiB and the default raw-field/display-neighbor cap is 32 MiB, checked before
+simulation. Base64 makes the HTML larger; `--max-preview-mib` explicitly changes
+the preview cap, subject to normal engine limits. `--max-step-s` changes numerical
+accuracy, while input sampling fields control exported snapshots. Generated files
+under `.data/` are gitignored; source fixtures are in `tests/fixtures/layouts/`.
+
+The closed/open doorway examples use identical sources. The split-placement example
+uses two half-strength sources to preserve total emission; the courtyard example
+exercises an L-shaped domain and an excluded hole. Each runs for one hour with
+25 cm cells and 30-second snapshots.
+
 ### Emission policy (implemented) and future research candidates
 
 One relative unit represents a surrogate for 1 mg of consumed formulation, not
