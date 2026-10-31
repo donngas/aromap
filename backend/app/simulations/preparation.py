@@ -11,12 +11,13 @@ from pydantic import ValidationError
 from app.diffusers.models import ConsumerDiffuserDefinition
 from app.simulations.engine.grid import build_grid, grid_extent
 from app.simulations.engine.exterior import map_exterior_openings
-from app.simulations.engine.airflow import build_airflow
+from app.simulations.engine.airflow import build_airflow, validate_device_positions
 from app.simulations.engine.models import PreparedSimulation, ResolvedInitialState
 from app.simulations.engine.state import initial_state_fingerprint, validate_initial_state
 from app.simulations.emissions import resolve_emission
 from app.simulations.errors import PreparationError
 from app.simulations.geometry import resolve_geometry
+from app.simulations.resolution import automatic_cell_size, protect_features
 from app.simulations.limits import (
     DEFAULT_CELL_SIZE_M, DEFAULT_DIFFUSIVITY_M2_PER_S, DEFAULT_REMOVAL_RATE_PER_S, DEFAULT_SAMPLE_INTERVAL_S,
     ExecutionLimits, PreparationLimits, MIXING_PRESETS_M2_PER_S,
@@ -26,7 +27,7 @@ from app.simulations.models import (
     SimulationConfiguration, SimulationInput,
 )
 
-PREPARATION_VERSION = "square-center-grid-v2"
+PREPARATION_VERSION = "square-center-grid-v4"
 SourceResolver = Callable[[ConsumerDiffuserDefinition, DiffuserPlacement], ResolvedEmissionProfile]
 
 
@@ -107,7 +108,12 @@ def _prepare_input(
     times = _sample_times(configuration.settings, limits)
     cell_size = configuration.settings.grid_cell_size_m
     if cell_size is None:
-        cell_size = default_cell_size_m
+        limits.check_resolution(default_cell_size_m)
+        cell_size = automatic_cell_size(
+            geometry, base_cell_m=default_cell_size_m, channels=len(enabled),
+            duration_s=configuration.settings.duration_s, samples=len(times), limits=limits,
+        )
+        cell_size = protect_features(geometry, configuration.opening_states, cell_size, default_cell_size_m)
     limits.check_resolution(cell_size)
     _, _, rows, columns = grid_extent(geometry.indoor_domain, cell_size, limits)
     limits.output_bytes(len(times), len(enabled), rows, columns)
@@ -151,6 +157,11 @@ def _prepare_input(
         ],
         "initial_state_fingerprint": None,
     }
+    payload["assumptions"].append(
+        f"Grid cell size {cell_size} m: "
+        + ("explicit request." if configuration.settings.grid_cell_size_m is not None
+           else "automatic workload policy with aperture and footprint safeguards; explicit grid size overrides it.")
+    )
     if configuration.settings.mixing_preset is not None:
         payload["assumptions"].append(f"Mixing preset {configuration.settings.mixing_preset}: {diffusion} m²/s; rounded literature-based scenario, not measured residual mixing.")
     elif configuration.settings.effective_diffusivity_m2_per_s is None:
@@ -161,7 +172,7 @@ def _prepare_input(
         f"Airflow: outdoor conditions {configuration.airflow.outdoor_conditions}, "
         f"wind direction {configuration.airflow.wind_direction_degrees} degrees toward; "
         f"{len(configuration.airflow.devices)} recirculating devices. "
-        "Opening exchange, wind potential, and fan/AC strength and shape use uncalibrated engineering presets; background removal excludes modeled openings."
+        "Opening exchange, wind potential, and fan/AC strength and shape use numerically calibrated demo scenarios, not measured-room validation; background removal excludes modeled openings."
     )
     fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
     return SimulationInput(input_fingerprint=fingerprint, **payload)
@@ -180,16 +191,40 @@ def prepare_run(
     input = _prepare_input(configuration, allow_residual_only=initial_state is not None, **resolution_options)
     channels = len(initial_state.channels) if initial_state is not None else len(input.sources)
     limits.check(channels, limits.max_placements, "Channel count including residual sources")
-    _, _, rows, columns = grid_extent(input.geometry.indoor_domain, input.grid_cell_size_m, limits)
-    size = limits.output_bytes(len(input.sample_times_s), channels, rows, columns)
-    # Conservative array/preparation allowance, not a bound on native solver RSS.
-    estimated_working_bytes = size + rows * columns * (128 + channels * 8 * 3)
-    execution_limits.check_memory(estimated_working_bytes)
-    grid = build_grid(input, limits)
-    boundary, exterior_ids = map_exterior_openings(input.geometry, grid)
+    # Classify exterior openings before checking interior-door connectivity.
+    # Every candidate grid must also resolve devices and exterior boundary cells.
+    base_cell = resolution_options.get("default_cell_size_m", DEFAULT_CELL_SIZE_M)
+    automatic = configuration.settings.grid_cell_size_m is None
+    while True:
+        _, _, rows, columns = grid_extent(input.geometry.indoor_domain, input.grid_cell_size_m, limits)
+        size = limits.output_bytes(len(input.sample_times_s), channels, rows, columns)
+        estimated_working_bytes = size + rows * columns * (128 + channels * 8 * 3)
+        execution_limits.check_memory(estimated_working_bytes)
+        retry_error = None
+        try:
+            grid = build_grid(input, limits)
+            boundary, exterior_ids = map_exterior_openings(input.geometry, grid)
+            if exterior_ids:
+                grid = build_grid(input, limits, exterior_ids)
+                boundary, exterior_ids = map_exterior_openings(input.geometry, grid)
+            validate_device_positions(grid, input.airflow, boundary, input.geometry)
+            if not any("no represented cell connection" in w for w in grid.warnings):
+                break
+        except PreparationError as exc:
+            if exc.code not in {"unresolved_source", "unresolved_airflow_device", "unresolved_exterior_opening", "empty_grid"}:
+                raise
+            retry_error = exc
+        if not automatic or input.grid_cell_size_m <= base_cell + 1e-9:
+            if retry_error is not None:
+                raise retry_error
+            break  # Preserve the existing baseline/explicit doorway warning.
+        payload = input.model_dump(exclude={"input_fingerprint"})
+        payload["grid_cell_size_m"] = max(base_cell, round(input.grid_cell_size_m - .05, 10))
+        payload["assumptions"] = [a for a in payload["assumptions"] if not a.startswith("Grid cell size")]
+        payload["assumptions"].append(f"Grid cell size {payload['grid_cell_size_m']} m: automatic policy refined to preserve source/door mapping and airflow device/opening mapping.")
+        fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+        input = SimulationInput(input_fingerprint=fingerprint, **payload)
     if exterior_ids:
-        grid = build_grid(input, limits, exterior_ids)
-        boundary, exterior_ids = map_exterior_openings(input.geometry, grid)
         grid = replace(grid, warnings=(*grid.warnings,
             "Exterior openings are inferred from proximity to the indoor boundary; review results when interior walls lie close to the perimeter."))
     airflow = None

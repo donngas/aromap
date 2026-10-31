@@ -257,3 +257,74 @@ def test_mixing_presets_and_medium_default_are_resolved_and_recorded():
     body['settings']['mixing_preset'] = None
     result = _prepare(SimulationConfiguration.model_validate(body), {'A1': 1})
     assert result.input.parameters.effective_diffusivity_m2_per_s == MIXING_PRESETS_M2_PER_S['medium']
+
+
+def test_wind_projection_converges_under_grid_refinement_and_reverses():
+    from scripts.calibrate_presets import opening_run
+    flows = []
+    for h in (.125, .25, .5):
+        run = opening_run(6, 6, cell=h, cross=True, outdoor='moderate')
+        field = run.airflow_field
+        a, b = run.grid.connections.T
+        div = np.bincount(a, weights=field.edge_flux, minlength=run.grid.active_cell_count) - np.bincount(b, weights=field.edge_flux, minlength=run.grid.active_cell_count)
+        div += np.bincount([e.cell_index for e in run.exterior_openings], weights=field.boundary_outflow, minlength=run.grid.active_cell_count)
+        np.testing.assert_allclose(div, 0, atol=1e-10)
+        flows.append(np.maximum(field.boundary_outflow, 0).sum())
+    assert max(flows) / min(flows) < 1.04
+    forward = opening_run(cross=True, outdoor='moderate', angle=90)
+    reverse = opening_run(cross=True, outdoor='moderate', angle=270)
+    parallel = opening_run(cross=True, outdoor='moderate', angle=0)
+    np.testing.assert_allclose(forward.airflow_field.boundary_outflow, -reverse.airflow_field.boundary_outflow, atol=1e-10)
+    np.testing.assert_allclose(parallel.airflow_field.boundary_outflow, 0, atol=1e-10)
+
+
+def test_exterior_door_kind_reaches_airflow_and_presets_are_ordered():
+    from scripts.calibrate_airflow import prepared
+    from app.simulations.models import SimulationConfiguration
+    window = prepared(4, 4, window=True)
+    # Build a real API configuration rather than only substituting boundary metadata.
+    body = _config(width=4, height=4).model_dump()
+    body['geometry_m']['walls'] = [{'id': 'north', 'start': {'x': 0, 'y': 0}, 'end': {'x': 4, 'y': 0}}]
+    body['geometry_m']['doors'] = [{'id': 'd', 'wall_id': 'north', 'boundary_kind': 'exterior', 'start': {'x': 1.6, 'y': 0}, 'end': {'x': 2.4, 'y': 0}}]
+    body['opening_states'] = [{'opening_id': 'd', 'is_open': True}]
+    values = []
+    for condition in ('calm', 'moderate', 'breezy'):
+        body['airflow']['outdoor_conditions'] = condition
+        run = _prepare(SimulationConfiguration.model_validate(body), {'A1': 1})
+        assert {e.kind for e in run.exterior_openings} == {'door'}
+        values.append(run.airflow_field.boundary_exchange.sum())
+    assert window.airflow_field.boundary_exchange.sum() < values[0] < values[1] < values[2]
+
+
+def test_device_strength_changes_flow_without_creating_mass():
+    from app.simulations.models import SimulationConfiguration
+    for kind in ('fan', 'ac'):
+        speeds = []
+        for strength in ('low', 'medium', 'high'):
+            body = _config(width=4, height=4).model_dump()
+            body['airflow']['devices'] = [{'id': 'f', 'type': kind, 'position_m': {'x': 2, 'y': 2}, 'direction_degrees': 0, 'strength': strength}]
+            run = _prepare(SimulationConfiguration.model_validate(body), {'A1': 1})
+            speeds.append(np.max(np.abs(run.airflow_field.edge_flux)))
+        assert 0 < speeds[0] < speeds[1] < speeds[2]
+
+
+def test_timestep_caps_aggregate_loss_from_multiple_opening_pieces():
+    import math
+    from app.simulations.engine.airflow import AirflowField
+    run = _prepare(_config(duration=2, sample_times=(0,2)), {'A1':1})
+    boundary = (SimpleNamespace(cell_index=0), SimpleNamespace(cell_index=0))
+    field = AirflowField(np.zeros(len(run.grid.connections)), np.zeros(2), np.array([.1,.1]))
+    output = simulate(replace(run, airflow_field=field, exterior_openings=boundary))
+    expected_max_step = .25 / (.2 / run.grid.cell_size_m**2)
+    assert f'{math.ceil(2 / expected_max_step)} uniform steps' in output.diagnostics[0]
+
+
+def test_gaussian_tail_cannot_drive_a_disconnected_room_beyond_visibility_cutoff():
+    wall = {'id':'wall','start':{'x':6,'y':0},'end':{'x':6,'y':4}}
+    run = _prepare(_config(width=12,height=4,walls=[wall]), {'A1':1})
+    settings = AirflowSettings.model_validate({'devices':[{
+        'id':'f','type':'fan','position_m':{'x':1,'y':2},'direction_degrees':0,'strength':'high'}]})
+    field = build_airflow(run.grid, settings, (), run.input.geometry)
+    right = np.argwhere(run.grid.active_mask)[:,1] >= 24
+    a,b = run.grid.connections.T
+    np.testing.assert_allclose(field.edge_flux[right[a]&right[b]], 0, atol=1e-12)

@@ -113,7 +113,7 @@ class SimulationSettings(ContractModel):
     )
     sample_times_s: list[float] | None = None
     grid_cell_size_m: float | None = Field(
-        default=None, gt=0, description="Cell side length in meters; preparation defaults to 0.25 when omitted.",
+        default=None, gt=0, description="Cell side length in meters; omission selects a workload/geometry-aware grid starting at 0.25 m.",
     )
     effective_diffusivity_m2_per_s: float | None = Field(default=None, gt=0)
     mixing_preset: Literal["low", "medium", "high"] | None = None
