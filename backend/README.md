@@ -262,8 +262,7 @@ Routes and typed request/response schemas are exposed in Swagger now:
 | --- | --- | --- |
 | `POST /api/simulations` | One metric configuration; future `202` with `job_id`, `client_request_id`, `status_url` | Validates then returns `503 simulation_unavailable`; creates no job |
 | `GET /api/simulations/{job_id}` | Status, request correlation, timestamps, result or error | `404 job_not_found`; no simulation jobs exist yet |
-| `GET /api/simulations/{job_id}/fields` | Separate concentration artifact download | `404 result_not_found` |
-| `GET /api/simulations/{job_id}/mask` | Separate shared active-domain mask download | `404 result_not_found` |
+| `GET /api/simulations/{job_id}/fields` | One download bundling concentration and active-domain mask | `404 result_not_found` |
 
 Request models live in `simulations/models.py` and `simulations/schemas.py`.
 See the [example request](tests/fixtures/simulations/request.json) and
@@ -282,7 +281,11 @@ the FE's saved input format need not match them.
 
 The initial footprint representation is an `indoor_domain` polygon `boundary` with
 optional `holes`, all metric points. Closing edges are implicit. This distinguishes
-indoor space from the rectangular image extent. Walls have IDs and metric `start`
+indoor space from the rectangular image extent. The planned UI lets the user define
+the indoor boundary after initial recognition; FE retains it with pixel geometry
+and converts it to meters for the simulation request. Recognition does not
+currently supply this boundary. The UI interaction remains follow-up work.
+Walls have IDs and metric `start`
 and `end`; doors/windows additionally reference a `wall_id`. Placement positions
 are explicitly `position_m`. Polygon validity, wall topology, source containment,
 and cost limits remain engine/preparation work; type/reference checks alone do
@@ -300,8 +303,8 @@ run_id, input_fingerprint, model_version
 grid                              origin_m, cell_size_m, rows, columns, axis directions
 channels[]                        channel_id, placement_id, definition_id (ordered)
 sample_times_s[]
-fields                            url, encoding, axes, shape, units
-active_domain_mask                url, encoding, axes, shape
+fields                            url, bundle encoding, concentration axes/shape/units
+  active_domain_mask              axes, shape (included in the same download)
 resolved_assumptions[], diagnostics[], warnings[], expires_at
 ```
 
@@ -315,7 +318,9 @@ y + (row + 0.5)*cell_size)`, x rightward/y downward. Units are
 `relative_units_per_m2`, not perceived scent strength.
 
 Polling metadata never embeds the large numerical arrays. After success, FE fetches
-the field/mask URLs once, then performs playback and channel highlighting locally.
+`fields.url` once: the bundle contains `concentration` and `active_domain_mask`
+arrays. There is no separate mask endpoint or download. FE then performs playback
+and channel highlighting locally.
 Artifact encoding is intentionally not selected yet; the download routes document
 a generic binary response until an engine format is chosen. Aggregates by definition
 or all placements can be derived under shared relative-unit assumptions instead of
