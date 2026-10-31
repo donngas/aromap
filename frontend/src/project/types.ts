@@ -71,6 +71,13 @@ export const MAX_AIRFLOW_DEVICES = 8
 export const OUTDOOR_CONDITIONS = ['calm', 'moderate', 'breezy'] as const
 export type OutdoorConditions = (typeof OUTDOOR_CONDITIONS)[number]
 
+/**
+ * How much the room air mixes on its own (people moving, heating, natural
+ * drafts): backend settings.mixing_preset. Medium is the backend default.
+ */
+export const MIXING_PRESETS = ['low', 'medium', 'high'] as const
+export type MixingPreset = (typeof MIXING_PRESETS)[number]
+
 /** Outside weather, mirroring backend AirflowSettings.outdoor_conditions and wind direction. */
 export interface Outdoor {
   conditions: OutdoorConditions
@@ -111,6 +118,8 @@ export interface ProjectDocument {
   simulationHours: SimulationHours
   /** Outside weather for every scenario. */
   outdoor: Outdoor
+  /** Indoor air mixing for every scenario. Background ventilation stays at the backend default. */
+  mixing: MixingPreset
   /** Furthest page reached, where "continue" resumes. */
   step: ProjectStep
 }
@@ -143,6 +152,7 @@ export function createProject(plan: ProjectDocument['plan']): ProjectDocument {
     view: { wallThickness: null, showImage: true },
     simulationHours: 1,
     outdoor: { conditions: 'calm', wind_direction_degrees: 0 },
+    mixing: 'medium',
     step: 'diffusers',
   }
 }
@@ -163,9 +173,10 @@ export function normalizeProject(doc: ProjectDocument): ProjectDocument {
   }
   const simulationHours = SIMULATION_HOURS.includes(doc.simulationHours) ? doc.simulationHours : 1
   const outdoor = doc.outdoor ?? { conditions: 'calm', wind_direction_degrees: 0 }
+  const mixing = MIXING_PRESETS.includes(doc.mixing) ? doc.mixing : 'medium'
   const scenarios = doc.scenarios.map((s) => ({ ...s, airflow_devices: s.airflow_devices ?? [] }))
   const diffusers = doc.diffusers.map((d) => ({ ...d, scentFamily: normalizeScent(d.scentFamily) }))
-  return { ...doc, calibration, indoor, simulationHours, outdoor, scenarios, diffusers, step }
+  return { ...doc, calibration, indoor, simulationHours, outdoor, mixing, scenarios, diffusers, step }
 }
 
 /** Next unused "배치안 N" name. */

@@ -17,7 +17,6 @@ import {
   distanceToRings,
   metersPerPixel,
   pointInDomain,
-  polygonArea,
   ringCrossings,
 } from '../floorPlan/geometry.ts'
 import type { Opening, PixelPoint, Wall } from '../floorPlan/layout.ts'
@@ -118,34 +117,13 @@ export function buildSimulationRequest(project: ProjectDocument, scenario: Scena
         strength: d.strength,
       })),
     },
-    settings: { duration_s: project.simulationHours * 3600 },
+    settings: { duration_s: project.simulationHours * 3600, mixing_preset: project.mixing },
   }
   // The key identifies the configuration, to tell whether a result is out of date.
   const key = JSON.stringify(body)
   return { ok: true, request: { client_request_id: crypto.randomUUID(), ...body }, key }
 }
 
-/** Backend ExecutionLimits.max_runtime_s: longer runs are stopped. */
-export const MAX_RUN_SECONDS = 120
-/** Backend default cell side, in meters. */
-const CELL_M = 0.25
-/**
- * Measured on the Docker backend (2026-11-01): solving costs about this many
- * seconds per grid cell, per diffuser, per simulated hour. A rough guide only;
- * it depends on the machine.
- */
-const SECONDS_PER_CELL_CHANNEL_HOUR = 6e-4
-
-/** Rough solver time in seconds, or null before space setup is done. */
-export function estimateRunSeconds(project: ProjectDocument, scenario: Scenario): number | null {
-  const { calibration, indoor } = project
-  const mpp = calibration ? metersPerPixel(calibration.start, calibration.end, calibration.distance_m) : null
-  if (!mpp || !indoor) return null
-  const areaM2 = (polygonArea(indoor.boundary) - indoor.holes.reduce((sum, h) => sum + polygonArea(h), 0)) * mpp * mpp
-  const cells = areaM2 / (CELL_M * CELL_M)
-  const channels = Math.max(1, scenario.placements.filter((p) => p.enabled).length)
-  return cells * channels * project.simulationHours * SECONDS_PER_CELL_CHANNEL_HOUR
-}
 
 function toDefinition(d: DiffuserDraft): ConsumerDiffuserDefinition {
   const info = TYPE_INFO[d.type]

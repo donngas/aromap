@@ -67,6 +67,7 @@
   overflow-y: auto;
 }
 
+.fwin[hidden],
 .fwin__body[hidden] {
   display: none;
 }
