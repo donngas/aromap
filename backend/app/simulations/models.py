@@ -35,7 +35,8 @@ class SimulationSettings(BaseModel):
 class SimulationConfiguration(BaseModel):
     """One submitted configuration, not a saved frontend scenario.
 
-    Preparation must validate calibration, geometry, all ID references, and
+    Draft shape pending engine design: future requests will carry FE-derived
+    metric geometry. Backend preparation validates geometry, ID references, and
     duplicate opening states. Open-window modeling remains undefined.
     """
 
@@ -50,8 +51,8 @@ class SimulationConfiguration(BaseModel):
 class MetricPoint(BaseModel):
     """Meters: same top-left origin and axis directions as the editable layout.
 
-    Preparation converts pixel positions before constructing engine inputs;
-    the engine never interprets image dimensions or screen coordinates.
+    Future requests supply FE-derived metric positions; the engine never
+    interprets image dimensions or screen coordinates.
     """
 
     x: float

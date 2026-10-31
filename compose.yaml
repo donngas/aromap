@@ -5,6 +5,9 @@ services:
       target: development
     ports:
       - "${HOST_BIND:-127.0.0.1}:${FRONTEND_PORT:-5173}:5173"
+    environment:
+      # Consumed by the FE lead's Vite proxy configuration; not a browser URL.
+      API_PROXY_TARGET: ${API_PROXY_TARGET:-http://backend:8000}
     volumes:
       - ./frontend/src:/app/src
       - ./frontend/public:/app/public

@@ -146,6 +146,7 @@ def test_real_process_job_lifecycle_and_persistence(tmp_path, provider, state):
         if state == "succeeded":
             assert result["error"] is None
             assert result["result"]["floor_plan"]["reference_image"] is None
+            assert result["result"]["floor_plan"]["layout"]["calibration"] is None
             warning = result["result"]["warnings"][0]
             assert f"process {os.getpid()};" not in warning
         else:
@@ -220,3 +221,4 @@ def test_cors_and_openapi(tmp_path):
         schema = client.get("/openapi.json").json()
         assert "multipart/form-data" in schema["paths"]["/api/floor-plans/uploads"]["post"]["requestBody"]["content"]
         assert "ProjectDocument" not in schema["components"]["schemas"]
+        assert "calibration" in schema["components"]["schemas"]["Layout"]["properties"]
