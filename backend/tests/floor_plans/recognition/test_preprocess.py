@@ -7,8 +7,12 @@ import pytest
 from app.floor_plans.recognition.preprocess import (
     InvalidImageError,
     dark_mask,
+    detail_mask,
     estimate_wall_thickness,
+    fill_hollow_walls,
+    line_mask,
     load_image,
+    standardize_size,
     wall_mask,
 )
 
@@ -69,3 +73,60 @@ def test_wall_mask_is_empty_without_dark_strokes() -> None:
 
     assert thickness is None
     assert not mask.any()
+
+
+def test_standardize_size_downscales_large_images() -> None:
+    large = np.zeros((1000, 4000, 3), dtype=np.uint8)
+
+    image, scale = standardize_size(large)
+
+    assert image.shape[:2] == (500, 2000)
+    assert scale == 0.5
+
+
+def test_standardize_size_keeps_small_images(shop_plan: np.ndarray) -> None:
+    image, scale = standardize_size(shop_plan)
+
+    assert image is shop_plan
+    assert scale == 1.0
+
+
+def test_detail_mask_keeps_light_colored_lines_but_not_flat_fills() -> None:
+    image = np.full((100, 100, 3), (120, 180, 250), dtype=np.uint8)  # orange floor
+    cv2.line(image, (10, 50), (90, 50), (240, 144, 155), 1)  # pink arc-like line
+
+    mask = detail_mask(image)
+
+    assert mask[50, 50] == 255
+    assert mask[20, 50] == 0
+
+
+def test_line_mask_keeps_light_gray_lines() -> None:
+    image = np.full((100, 100, 3), 255, dtype=np.uint8)
+    cv2.line(image, (10, 50), (90, 50), (150, 150, 150), 1)
+
+    assert line_mask(image)[50, 50] == 255
+    assert dark_mask(image)[50, 50] == 0
+
+
+def test_fill_hollow_walls_fills_space_between_parallel_lines() -> None:
+    lines = np.zeros((300, 300), dtype=np.uint8)
+    cv2.rectangle(lines, (50, 50), (250, 250), 255, 1)  # outer face of the wall
+    cv2.rectangle(lines, (56, 56), (244, 244), 255, 1)  # inner face
+
+    filled = fill_hollow_walls(lines)
+
+    assert filled[53, 150] == 255  # inside the wall
+    assert filled[150, 150] == 0  # the room
+    assert filled[20, 20] == 0  # outside the plan
+
+
+def test_wall_mask_reads_hollow_line_drawings() -> None:
+    image = np.full((600, 600, 3), 255, dtype=np.uint8)
+    cv2.rectangle(image, (100, 100), (500, 500), (140, 140, 140), 1)
+    cv2.rectangle(image, (107, 107), (493, 493), (140, 140, 140), 1)
+
+    mask, thickness = wall_mask(image)
+
+    assert thickness is not None and 6 <= thickness <= 10
+    assert mask[103, 300] == 255

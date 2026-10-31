@@ -1,5 +1,9 @@
 from app.floor_plans.recognition.openings import Opening
-from app.floor_plans.recognition.topology import find_parent, split_at_junctions
+from app.floor_plans.recognition.topology import (
+    drop_small_groups,
+    find_parent,
+    split_at_junctions,
+)
 from app.floor_plans.recognition.walls import WallSegment
 
 
@@ -45,3 +49,17 @@ def test_no_parent_when_junction_inside_opening() -> None:
     walls = split_at_junctions([_h(0, 0, 100), _v(50, 0, 80)])
 
     assert find_parent(Opening("door", _h(0, 30, 70)), walls) is None
+
+
+def test_drops_small_separate_groups() -> None:
+    building = [_h(0, 0, 500), _v(0, 0, 500), _h(500, 0, 500), _v(500, 0, 500)]
+    plant = [_h(800, 700, 740), _v(720, 780, 820)]
+
+    assert drop_small_groups(building + plant) == building
+
+
+def test_keeps_all_large_groups() -> None:
+    shop = [_h(0, 0, 500), _v(0, 0, 500)]
+    annex = [_h(0, 700, 1000), _v(1000, 0, 300)]
+
+    assert drop_small_groups(shop + annex) == shop + annex

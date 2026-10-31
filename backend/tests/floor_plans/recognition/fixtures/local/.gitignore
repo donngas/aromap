@@ -1,0 +1,3 @@
+# Local-only test images with unclear redistribution rights; tests skip when absent.
+*
+!.gitignore

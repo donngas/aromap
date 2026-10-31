@@ -13,8 +13,18 @@ from app.floor_plans.models import (
     WindowOpening,
 )
 from app.floor_plans.recognition.openings import Opening, find_openings
-from app.floor_plans.recognition.preprocess import dark_mask, load_image, wall_mask
-from app.floor_plans.recognition.topology import find_parent, split_at_junctions
+from app.floor_plans.recognition.preprocess import (
+    detail_mask,
+    line_mask,
+    load_image,
+    standardize_size,
+    wall_mask,
+)
+from app.floor_plans.recognition.topology import (
+    drop_small_groups,
+    find_parent,
+    split_at_junctions,
+)
 from app.floor_plans.recognition.walls import WallSegment, detect_walls
 
 
@@ -23,24 +33,35 @@ def recognize(image_path: Path) -> RecognitionDraft:
 
     Raises InvalidImageError when the file cannot be read or decoded.
     """
-    image = load_image(image_path)
-    height, width = image.shape[:2]
+    original = load_image(image_path)
+    height, width = original.shape[:2]
+    image, scale = standardize_size(original)
     segments: list[WallSegment] = []
     openings: list[Opening] = []
+    warnings: list[str] = []
 
     mask, thickness = wall_mask(image)
     if thickness is not None:
         segments = detect_walls(mask, thickness)
-        segments, openings = find_openings(segments, dark_mask(image), thickness)
+        segments, openings = find_openings(
+            segments, line_mask(image), detail_mask(image), thickness
+        )
+        kept = drop_small_groups(segments)
+        if len(kept) < len(segments):
+            warnings.append(
+                f"Ignored {len(segments) - len(kept)} small wall-like shapes not "
+                "connected to the main walls (e.g. plants or equipment)."
+            )
+        segments = kept
+        openings = [o for o in openings if find_parent(o, segments) is not None]
         segments = split_at_junctions(segments)
 
     wall_ids = {segment: _new_id() for segment in segments}
     doors: list[DoorOpening] = []
     windows: list[WindowOpening] = []
-    warnings: list[str] = []
     for opening in openings:
         parent = find_parent(opening, segments)
-        start, end = _points(opening.span)
+        start, end = _points(opening.span, scale)
         if parent is None:
             warnings.append(
                 f"Skipped a {opening.kind} at ({start.x:.0f}, {start.y:.0f}): "
@@ -58,7 +79,7 @@ def recognize(image_path: Path) -> RecognitionDraft:
 
     walls = []
     for segment, wall_id in wall_ids.items():
-        start, end = _points(segment)
+        start, end = _points(segment, scale)
         walls.append(Wall(id=wall_id, start=start, end=end))
     layout = Layout(
         id=_new_id(),
@@ -71,9 +92,10 @@ def recognize(image_path: Path) -> RecognitionDraft:
     return RecognitionDraft(floor_plan=FloorPlan(layout=layout), warnings=warnings)
 
 
-def _points(segment: WallSegment) -> tuple[PixelPoint, PixelPoint]:
+def _points(segment: WallSegment, scale: float) -> tuple[PixelPoint, PixelPoint]:
+    """Endpoints mapped from the standardized image back to input pixels."""
     (x1, y1), (x2, y2) = segment.endpoints
-    return PixelPoint(x=x1, y=y1), PixelPoint(x=x2, y=y2)
+    return PixelPoint(x=x1 / scale, y=y1 / scale), PixelPoint(x=x2 / scale, y=y2 / scale)
 
 
 def _new_id() -> str:

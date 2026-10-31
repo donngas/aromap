@@ -17,6 +17,8 @@ MIN_LENGTH_RATIO = 3
 # Components thicker than this multiple of the wall thickness are filled
 # regions (e.g. solid counters or shelving), not walls.
 MAX_THICKNESS_RATIO = 2
+# Segments closer than this (px) are considered connected.
+TOUCH_TOLERANCE_PX = 0.5
 
 
 @dataclass(frozen=True)
@@ -33,6 +35,20 @@ class WallSegment:
         if self.orientation == "horizontal":
             return (self.start, self.offset), (self.end, self.offset)
         return (self.offset, self.start), (self.offset, self.end)
+
+    def touches(self, other: "WallSegment") -> bool:
+        """Whether the segments meet, overlap, or cross (within TOUCH_TOLERANCE_PX)."""
+        eps = TOUCH_TOLERANCE_PX
+        if self.orientation == other.orientation:
+            return (
+                abs(self.offset - other.offset) <= eps
+                and self.start <= other.end + eps
+                and other.start <= self.end + eps
+            )
+        return (
+            self.start - eps <= other.offset <= self.end + eps
+            and other.start - eps <= self.offset <= other.end + eps
+        )
 
 
 def detect_walls(mask: np.ndarray, thickness: int) -> list[WallSegment]:
