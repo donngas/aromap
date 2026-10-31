@@ -1,8 +1,8 @@
-# Development template: add pyproject.toml, uv.lock, and app/main.py.
-# Include uvicorn in the project's runtime dependencies.
+# Single-host backend; mount AROMAP_DATA_DIR for persistent temporary resources.
 FROM python:3.12-slim
 
-COPY --from=ghcr.io/astral-sh/uv:0.9.5 /uv /uvx /bin/
+# Use PyPI rather than a second container registry for the uv binary.
+RUN pip install --no-cache-dir uv==0.12.19
 
 WORKDIR /app
 
