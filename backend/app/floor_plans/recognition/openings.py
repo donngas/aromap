@@ -7,6 +7,7 @@ recorded as a door or window on that wall.
 from dataclasses import dataclass, replace
 from typing import Literal
 
+import cv2
 import numpy as np
 
 from app.floor_plans.recognition.doors import (
@@ -34,6 +35,10 @@ MAX_OPENING_IMAGE_RATIO = 0.25
 MAX_WINDOW_IMAGE_RATIO = 0.5
 # A line along the gap counts as window glazing when this fraction of it is dark.
 GLAZING_LINE_COVERAGE = 0.6
+# Each glazing line also has one unbroken piece at least this fraction of the
+# gap long; dashed lines across a gap mark an open passage (e.g. into a
+# stockroom), not glass.
+MIN_GLAZING_SOLID_RATIO = 0.35
 # Windows are drawn with at least this many separate parallel lines; a single
 # line across a gap is usually a door threshold.
 MIN_GLAZING_LINES = 2
@@ -52,6 +57,21 @@ MAX_GLAZING_LINE_WIDTH_RATIO = 1 / 2
 # Minimum allowed glazing line width (px), so on thin walls a frame line that
 # touches a fixture edge (e.g. a stockroom shelf against the window) still counts.
 MIN_GLAZING_LINE_WIDTH_PX = 4
+
+# A door drawn half open (CAD style) may have only a short arc, too short to fit,
+# but its leaf is a straight line from the hinge at one gap end, about as long as
+# the gap, at an angle to the wall. Leaves are checked between these angles off
+# the wall line: flatter lines are thresholds or glazing, and lines near square
+# to the wall are door frames, counters, or other walls (a door opened square is
+# drawn with a full arc anyway).
+LEAF_ANGLES_DEG = range(15, 76, 3)
+# The leaf must be drawn along this fraction of its length, measured from one
+# wall thickness out from the hinge (the jamb) to this fraction of the gap width.
+LEAF_COVERAGE = 0.7
+LEAF_REACH_RATIO = 0.8
+# Beyond this many gap widths from the hinge the line must stop: longer lines are
+# furniture or fixture edges that happen to start at the wall.
+LEAF_END_RATIO = 1.3
 
 OpeningKind = Literal["door", "window"]
 
@@ -103,6 +123,12 @@ class _Symbols:
     ) -> None:
         self.lines = lines
         self.thickness = thickness
+        # Door leaves are thin lines away from the walls (a wall meeting the gap
+        # end would otherwise look like a leaf opened square to the wall).
+        self.leaf_lines = (lines > 0).astype(np.uint8)
+        if wall_pixels is not None:
+            self.leaf_lines[cv2.dilate(wall_pixels, np.ones((5, 5), np.uint8)) > 0] = 0
+        self.leaf_lines = cv2.dilate(self.leaf_lines, np.ones((3, 3), np.uint8))
         self.min_gap = MIN_OPENING_RATIO * thickness
         self.max_door_gap = max(
             MAX_OPENING_RATIO * thickness, MAX_OPENING_IMAGE_RATIO * max(lines.shape)
@@ -129,7 +155,9 @@ class _Symbols:
         between them stays wall. A leftover under one wall thickness at a gap end is
         a door frame and joins the door; a longer one is checked for glazing (e.g. a
         storefront window beside the entrance) and otherwise stays wall. Gaps too
-        wide for a door can only be windows (glass walls). An empty list means no
+        wide for a door can only be windows (glass walls). A door-sized gap with
+        neither arcs nor glazing is still a door when a straight door leaf runs
+        from one of its ends (a door drawn half open). An empty list means no
         symbol.
         """
         door_sized = gap.end - gap.start <= self.max_door_gap
@@ -150,7 +178,54 @@ class _Symbols:
             return found
         if _has_glazing(self.lines, gap, self.thickness):
             return [Opening("window", gap)]
+        if self.min_gap <= gap.end - gap.start <= MAX_OPENING_RATIO * self.thickness:
+            if _has_leaf(self.leaf_lines, gap, self.thickness):
+                return [Opening("door", gap)]
         return []
+
+
+def _has_leaf(lines: np.ndarray, gap: WallSegment, thickness: int) -> bool:
+    """Whether a straight door leaf runs from either end of the gap, on either side."""
+    # The hinge sits at the gap end, or up to one wall thickness in from it when
+    # the gap ends at the middle of a wall the door closes against.
+    for end, toward in ((gap.start, 1), (gap.end, -1)):
+        for inset in (0, thickness / 2, thickness):
+            hinge = end + toward * inset
+            width = gap.end - gap.start - inset
+            radii = np.arange(thickness, LEAF_REACH_RATIO * width)
+            beyond = np.arange(LEAF_END_RATIO * width, (LEAF_END_RATIO + 0.2) * width)
+            if len(radii) == 0:
+                continue
+            for side in (-1, 1):
+                for angle in np.radians(LEAF_ANGLES_DEG):
+                    along, across = toward * np.cos(angle), side * np.sin(angle)
+                    if _drawn(lines, gap, hinge, along, across, radii) < LEAF_COVERAGE:
+                        continue
+                    if _drawn(lines, gap, hinge, along, across, beyond) < 1 - LEAF_COVERAGE:
+                        return True
+    return False
+
+
+def _drawn(
+    lines: np.ndarray,
+    gap: WallSegment,
+    hinge: float,
+    along: float,
+    across: float,
+    radii: np.ndarray,
+) -> float:
+    """Fraction of points on a ray from the hinge that lie on a drawn line."""
+    a = hinge + along * radii
+    b = gap.offset + across * radii
+    xs, ys = (a, b) if gap.orientation == "horizontal" else (b, a)
+    xs, ys = np.rint(xs).astype(int), np.rint(ys).astype(int)
+    height, width = lines.shape
+    inside = (xs >= 0) & (xs < width) & (ys >= 0) & (ys < height)
+    if not inside.any():
+        return 0.0
+    hits = np.zeros(len(xs), bool)
+    hits[inside] = lines[ys[inside], xs[inside]] > 0
+    return float(hits.mean())
 
 
 def _merge_spans(
@@ -394,4 +469,15 @@ def _has_glazing_in_band(band: np.ndarray, thickness: int) -> bool:
     edges = np.flatnonzero(np.diff(np.concatenate(([0], covered.astype(int), [0]))))
     widths = edges[1::2] - edges[::2]
     max_width = max(MIN_GLAZING_LINE_WIDTH_PX, thickness * MAX_GLAZING_LINE_WIDTH_RATIO)
-    return len(widths) >= MIN_GLAZING_LINES and bool((widths <= max_width).all())
+    if len(widths) < MIN_GLAZING_LINES or not (widths <= max_width).all():
+        return False
+    return all(
+        _longest_run(band[start:end].any(axis=0)) >= MIN_GLAZING_SOLID_RATIO * band.shape[1]
+        for start, end in zip(edges[::2], edges[1::2])
+    )
+
+
+def _longest_run(drawn: np.ndarray) -> int:
+    """Length of the longest unbroken run of drawn pixels."""
+    edges = np.flatnonzero(np.diff(np.concatenate(([0], drawn.astype(int), [0]))))
+    return int((edges[1::2] - edges[::2]).max(initial=0))

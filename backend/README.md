@@ -765,11 +765,14 @@ is the wall thickness measured from the image. The committed plans in
   them are separate doors.
 - Sliding doors, or door leaves drawn as thin rectangles, are read as doors only
   on inner walls (see Windows).
-- Not supported: a half-open leaf with only a short arc.
+- A door drawn half open (CAD style: a straight leaf with only a short arc) is
+  found from its leaf: a line from the hinge at a gap end (or up to 1 T in from
+  it), 15–75° off the wall, about as long as the gap (3–15 T).
 
 **Windows**
-- At least 2 thin parallel lines inside the gap, each along at least 60% of it,
-  within 0.5–0.75 T of the wall line.
+- At least 2 thin parallel lines inside the gap, each along at least 60% of it
+  with one unbroken piece at least 35% of the gap, within 0.5–0.75 T of the wall
+  line. Dashed lines across a gap are an open passage, not glass.
 - Each line at most T/2 or 4 px wide; together they cover at most 80% of that
   band (more is a floor color, not glass).
 - On outer walls. Glazing on an inner wall (more than 2 T inside the outline) is
