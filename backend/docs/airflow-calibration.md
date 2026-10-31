@@ -94,15 +94,18 @@ a basis for adjusting wind coefficients.
 measured whole-room tracer mixing times of 174 and 206 s with high neutral
 supply air and 451 and 532 s with lower heated supply. Its ventilation uses two
 ceiling supply diffusers, return ducts and thermal plumes, with 3D sensor levels;
-it is not the simulated 2D horizontal recirculating fan. The script merely
+it is not the simulated 2D horizontal recirculating-device model used for fans and
+A/C. The script merely
 explores a similarly sized 6 × 9.25 m room, a point pulse, no removal, a central
 horizontal device and roomwide 20% coefficient-of-variation threshold. The
 analogous results are: off and low >900 s, medium 600 s, high 570 s. Sensor
 locations, pulse, geometry and vertical flows differ, so these are **not a
 comparison of matched experiments**, not a fit, and not evidence that the devices
 predict the LBNL mixing times. The model cannot identify a device's push and
-radius from these aggregate times. Current fan/AC speed inputs
-0.025/0.05/0.1 m/s and radii 1/1.5 m therefore remain **uncalibrated**.
+radius from these aggregate times. Each placed device contributes its own field.
+Fan and A/C use the same strength-to-speed presets (0.025/0.05/0.1 m/s), while
+the fan radius is 1 m and the A/C radius is 1.5 m. These per-type settings remain
+**uncalibrated**.
 
 A potential future fan benchmark is [Estaquio et al. (2026)](https://doi.org/10.3390/fluids11040090):
 they report a 2 × 3 × 2.5 m room and ten velocity probes with a pedestal fan.

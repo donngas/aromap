@@ -290,9 +290,11 @@ See the [example request](tests/fixtures/simulations/request.json) and
 fixtures, not simulated data or working download links.
 
 `SimulationRequest` carries `client_request_id`, `geometry_m`, consumer
-`diffuser_definitions`, metric `placements`, `opening_states`, `conditions`, and
-`settings`. Send only one selected configuration and its definitions: no image,
-pixel geometry, calibration, other scenarios, or entire project document.
+`diffuser_definitions`, metric `placements`, `opening_states`, `conditions`,
+optional `airflow`, and `settings`. Opening states apply to doors and windows;
+unspecified states are closed. Send only one selected configuration and its
+definitions: no image, pixel geometry, calibration, other scenarios, or entire
+project document.
 Every placement has a stable `placement_id` and `definition_id`; definitions contain
 raw capacity/units/lifetime/operating-hour inputs and provenance. Missing product
 information is allowed and standalone preparation resolves fallback relative rates.
@@ -311,10 +313,14 @@ are explicitly `position_m`. The preparation library now checks polygon validity
 wall/opening topology, source containment, and resource limits during job execution.
 A request accepted into the queue can therefore still fail preparation.
 
-Settings require positive `duration_s` and exactly one of `sample_interval_s` or
-strictly increasing `sample_times_s` within the duration. Omitted grid size resolves
-to **0.25 m (25 cm)**; requests can override it. Spreading/removal parameters still
-require explicit resolution; no physical defaults are implied by omission.
+Settings default to a one-hour duration; a supplied `duration_s` must be positive.
+Omit both sampling fields for automatic sampling. Otherwise supply at most one:
+`sample_interval_s` must be positive and no greater than the duration, while
+`sample_times_s` must be nonempty, strictly increasing, and within the duration.
+Omitted grid size resolves to **0.25 m (25 cm)**; requests can override it. Omitted
+spreading and removal resolve to provisional defaults of **0.0045 m²/s** and
+**0.5 ACH**. These are modeling assumptions, not measurements for the submitted
+space.
 
 Completed status will contain `SimulationResult` metadata:
 
@@ -846,10 +852,12 @@ independently of recognition using predefined layouts under `tests/fixtures/layo
 Airflow is a steady 2D scenario, not measured room airflow or CFD. Diffuser
 concentration remains a height-averaged relative quantity per square meter. The
 model adds one signed air flux per connected cell edge, measured in m²/s per
-unit room height. Fan and recirculating A/C devices generate a localized Gaussian
-initial velocity (0.025, 0.05, or 0.1 m/s for low, medium, high; radii 1 m and
-1.5 m respectively). These are illustrative engineering presets, not device
-specifications. Direction angles are degrees clockwise from image right (y down).
+unit room height. Each fan or recirculating A/C contributes its own localized
+Gaussian initial velocity. Both types use the same strength-to-speed presets
+(0.025, 0.05, or 0.1 m/s for low, medium, or high), with a 1 m radius per fan and
+a 1.5 m radius per A/C. Contributions from multiple devices are combined. These
+are illustrative engineering presets, not device specifications. Direction angles
+are degrees clockwise from image right (y down).
 
 The initial edge fluxes are projected to satisfy incompressible mass conservation.
 The continuous analogue is `u = u* - grad(phi)`, `laplacian(phi) = div(u*)`;
