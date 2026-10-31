@@ -1,0 +1,15 @@
+# Overlay: docker compose -p aromap-staging -f compose.yaml -f compose.staging.yaml up --build
+# Requires Docker Compose 2.24.4+ for !override. Keep this stack separate from local.
+services:
+  frontend:
+    build:
+      target: production
+    ports: !override
+      - "${HOST_BIND:-127.0.0.1}:${FRONTEND_PORT:-5173}:80"
+    volumes: !reset []
+
+  backend:
+    build:
+      target: production
+    volumes: !override
+      - backend-data:/data

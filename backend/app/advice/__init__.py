@@ -1,1 +1,1 @@
-"""Explicitly requested advice grounded in project and simulation snapshots."""
+"""Explicitly requested advice grounded in submitted configuration snapshots."""

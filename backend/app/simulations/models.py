@@ -2,6 +2,50 @@
 
 from pydantic import BaseModel, Field
 
+from app.diffusers.models import DiffuserDefinition
+from app.floor_plans.models import Layout, PixelPoint
+
+
+class DiffuserPlacement(BaseModel):
+    id: str
+    definition_id: str
+    position: PixelPoint
+    strength_override: float | None = Field(default=None, ge=0)
+    enabled: bool = True
+
+
+class OpeningState(BaseModel):
+    """Door/window state; omitted entries resolve to closed during preparation."""
+
+    opening_id: str
+    is_open: bool
+
+
+class EnvironmentalConditions(BaseModel):
+    removal_rate_per_s: float = Field(ge=0)
+
+
+class SimulationSettings(BaseModel):
+    duration_s: float = Field(gt=0)
+    sample_interval_s: float = Field(gt=0)
+    grid_cell_size_m: float = Field(gt=0)
+    effective_diffusivity_m2_per_s: float = Field(gt=0)
+
+
+class SimulationConfiguration(BaseModel):
+    """One submitted configuration, not a saved frontend scenario.
+
+    Preparation must validate calibration, geometry, all ID references, and
+    duplicate opening states. Open-window modeling remains undefined.
+    """
+
+    layout: Layout
+    diffuser_definitions: list[DiffuserDefinition] = Field(default_factory=list)
+    placements: list[DiffuserPlacement] = Field(default_factory=list)
+    opening_states: list[OpeningState] = Field(default_factory=list)
+    conditions: EnvironmentalConditions
+    settings: SimulationSettings
+
 
 class MetricPoint(BaseModel):
     """Meters: same top-left origin and axis directions as the editable layout.

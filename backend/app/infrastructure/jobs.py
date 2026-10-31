@@ -1,16 +1,196 @@
-"""Shared job status contract; execution and persistence are not implemented."""
+"""Single-process API dispatcher with a bounded queue and one child process.
 
-from datetime import datetime
-from typing import Literal
+SQLite records survive restarts; the queue does not. Unfinished jobs fail on
+startup. No database transaction is held during recognition.
+"""
 
-from pydantic import BaseModel
+import asyncio
+import importlib
+import logging
+import multiprocessing
+import time
+from concurrent.futures import ProcessPoolExecutor
+from uuid import uuid4
+
+from app.config import Settings
+from app.errors import api_error
+from app.floor_plans.models import RecognitionDraft
+from app.infrastructure.database import Database
+from app.infrastructure.storage import LocalStorage
+
+logger = logging.getLogger(__name__)
 
 
-class JobStatus(BaseModel):
-    id: str
-    kind: Literal["recognition", "simulation"]
-    state: Literal["queued", "running", "succeeded", "failed"]
-    input_fingerprint: str
-    expires_at: datetime
-    result_artifact_id: str | None = None
-    error_message: str | None = None
+def load_recognizer(target: str):
+    module, name = target.split(":", 1)
+    function = getattr(importlib.import_module(module), name)
+    if not callable(function):
+        raise ValueError("Recognition provider must be callable")
+    return function
+
+
+def execute_recognition(target: str, image_path: str, width: int, height: int) -> dict:
+    """Child-process boundary; validate the basic handoff before publishing."""
+    from pathlib import Path
+
+    draft = RecognitionDraft.model_validate(load_recognizer(target)(Path(image_path)))
+    layout = draft.floor_plan.layout
+    if (layout.width_px, layout.height_px) != (width, height):
+        raise ValueError("Recognition dimensions must match the prepared image")
+    if layout.revision != 1 or layout.calibration is not None or draft.floor_plan.reference_image is not None:
+        raise ValueError("Recognition output violates the draft handoff contract")
+    return draft.model_dump(mode="json")
+
+
+class Jobs:
+    def __init__(self, settings: Settings, database: Database, storage: LocalStorage):
+        self.settings = settings
+        self.database = database
+        self.storage = storage
+        self.queue: asyncio.Queue[str] = asyncio.Queue(maxsize=settings.queue_capacity)
+        self.executor: ProcessPoolExecutor | None = None
+        self.worker: asyncio.Task | None = None
+        self.cleaner: asyncio.Task | None = None
+
+    async def start(self):
+        with self.database.connect() as db:
+            db.execute(
+                "UPDATE jobs SET state='failed', updated_at=?, error_code='job_interrupted', "
+                "error_message='Processing was interrupted by a backend restart.' "
+                "WHERE state IN ('queued', 'running')", (time.time(),)
+            )
+        self.cleanup()
+        if self.settings.recognition_callable:
+            load_recognizer(self.settings.recognition_callable)
+            self.executor = ProcessPoolExecutor(
+                max_workers=1, mp_context=multiprocessing.get_context("spawn")
+            )
+            self.worker = asyncio.create_task(self.dispatch(), name="recognition-worker")
+        self.cleaner = asyncio.create_task(self.periodic_cleanup(), name="artifact-cleanup")
+
+    async def close(self):
+        for task in (self.cleaner, self.worker):
+            if task:
+                task.cancel()
+        await asyncio.gather(*(t for t in (self.cleaner, self.worker) if t), return_exceptions=True)
+        if self.executor:
+            await asyncio.to_thread(self.executor.shutdown, wait=True, cancel_futures=True)
+        with self.database.connect() as db:
+            db.execute(
+                "UPDATE jobs SET state='failed', updated_at=?, error_code='job_interrupted', "
+                "error_message='Processing was interrupted by backend shutdown.' "
+                "WHERE state IN ('queued', 'running')", (time.time(),)
+            )
+
+    def submit_recognition(self, image_id: str) -> str:
+        if not self.settings.recognition_callable:
+            raise api_error(503, "recognition_unavailable", "Recognition is not integrated yet.")
+        if self.queue.full():
+            raise api_error(429, "queue_full", "Recognition queue is full; try again later.")
+        now = time.time()
+        job_id = uuid4().hex
+        with self.database.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            image = db.execute(
+                "SELECT * FROM uploads WHERE id=? AND expires_at>?", (image_id, now)
+            ).fetchone()
+            if image is None or not self.storage.path(image["relative_path"]).is_file():
+                raise api_error(404, "image_not_found", "Image is unknown or expired.")
+            db.execute(
+                "INSERT INTO jobs (id, kind, state, image_id, created_at, updated_at, expires_at) "
+                "VALUES (?, 'recognition', 'queued', ?, ?, ?, ?)",
+                (job_id, image_id, now, now, now + self.settings.retention_seconds),
+            )
+        # Event-loop only: no await between the capacity check and enqueue.
+        self.queue.put_nowait(job_id)
+        return job_id
+
+    def recognition_status(self, job_id: str):
+        with self.database.connect() as db:
+            row = db.execute(
+                "SELECT * FROM jobs WHERE id=? AND kind='recognition' "
+                "AND (expires_at>? OR state IN ('queued', 'running'))", (job_id, time.time())
+            ).fetchone()
+        if row is None:
+            raise api_error(404, "job_not_found", "Job is unknown or expired.")
+        result = None
+        if row["state"] == "succeeded":
+            try:
+                result = RecognitionDraft.model_validate_json(
+                    self.storage.path(row["result_path"]).read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError):
+                raise api_error(500, "result_unavailable", "The recognition result is unavailable.")
+        return {
+            "job_id": row["id"], "state": row["state"],
+            "created_at": row["created_at"], "updated_at": row["updated_at"],
+            "expires_at": row["expires_at"], "result": result,
+            "error": {"code": row["error_code"], "message": row["error_message"]}
+            if row["state"] == "failed" else None,
+        }
+
+    async def dispatch(self):
+        while True:
+            job_id = await self.queue.get()
+            try:
+                with self.database.connect() as db:
+                    image = db.execute(
+                        "SELECT u.* FROM uploads u JOIN jobs j ON j.image_id=u.id WHERE j.id=?",
+                        (job_id,),
+                    ).fetchone()
+                    db.execute("UPDATE jobs SET state='running', updated_at=? WHERE id=?",
+                               (time.time(), job_id))
+                result = await asyncio.get_running_loop().run_in_executor(
+                    self.executor, execute_recognition, self.settings.recognition_callable,
+                    str(self.storage.path(image["relative_path"])), image["width_px"], image["height_px"],
+                )
+                relative_path = f"results/{job_id}.json"
+                self.storage.write_json(relative_path, result)
+                now = time.time()
+                with self.database.connect() as db:
+                    db.execute(
+                        "UPDATE jobs SET state='succeeded', updated_at=?, expires_at=?, result_path=? WHERE id=?",
+                        (now, now + self.settings.retention_seconds, relative_path, job_id),
+                    )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Recognition job %s failed", job_id)
+                now = time.time()
+                with self.database.connect() as db:
+                    db.execute(
+                        "UPDATE jobs SET state='failed', updated_at=?, expires_at=?, "
+                        "error_code='recognition_failed', error_message='Recognition could not complete.' WHERE id=?",
+                        (now, now + self.settings.retention_seconds, job_id),
+                    )
+            finally:
+                self.queue.task_done()
+
+    def cleanup(self):
+        now = time.time()
+        with self.database.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            expired_jobs = db.execute(
+                "SELECT id, result_path FROM jobs WHERE expires_at<=? AND state IN ('succeeded', 'failed')",
+                (now,),
+            ).fetchall()
+            for row in expired_jobs:
+                if row["result_path"]:
+                    self.storage.remove(row["result_path"])
+                db.execute("DELETE FROM jobs WHERE id=?", (row["id"],))
+            # Keep image records/files while any unexpired/active job references them.
+            expired_uploads = db.execute(
+                "SELECT id, relative_path FROM uploads u WHERE expires_at<=? "
+                "AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.image_id=u.id)", (now,)
+            ).fetchall()
+            for row in expired_uploads:
+                self.storage.remove(row["relative_path"])
+                db.execute("DELETE FROM uploads WHERE id=?", (row["id"],))
+
+    async def periodic_cleanup(self):
+        while True:
+            await asyncio.sleep(self.settings.cleanup_interval_seconds)
+            try:
+                self.cleanup()
+            except Exception:
+                logger.exception("Artifact cleanup failed; retrying next interval")
