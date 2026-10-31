@@ -40,6 +40,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(title="Aromap API", version="0.1.0", lifespan=lifespan)
 
+    @app.get("/health", tags=["operations"])
+    def health(request: Request):
+        """Ready after lifespan initialization; verify the SQLite registry responds.
+
+        Recognition being disabled is intentional and does not make uploads unready.
+        """
+        with request.app.state.floor_plans.database.connect() as db:
+            db.execute("SELECT 1").fetchone()
+        return {"status": "ok"}
+
     @app.exception_handler(HTTPException)
     async def http_error(request: Request, exc: HTTPException):
         detail = exc.detail if isinstance(exc.detail, dict) else {

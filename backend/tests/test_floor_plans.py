@@ -212,6 +212,7 @@ def test_expiry_cleanup_and_restart_interruption(tmp_path):
 
 def test_cors_and_openapi(tmp_path):
     with TestClient(create_app(Settings(data_dir=tmp_path))) as client:
+        assert client.get("/health").json() == {"status": "ok"}
         response = client.options("/api/floor-plans/uploads", headers={
             "Origin": "http://localhost:5173", "Access-Control-Request-Method": "POST"
         })
