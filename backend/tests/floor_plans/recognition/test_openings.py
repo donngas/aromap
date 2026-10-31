@@ -240,6 +240,32 @@ def test_wide_glazed_gap_is_a_window() -> None:
     assert WallSegment("horizontal", 100, 0, 600) in walls
 
 
+def test_window_frame_wider_than_wall_is_a_window() -> None:
+    # 10 px walls; the window frame lines sit 7 px either side of the wall line,
+    # just outside the wall itself.
+    segments = [WallSegment("horizontal", 100, 0, 100), WallSegment("horizontal", 100, 160, 300)]
+    lines = _blank(200)
+    lines[93, 100:161] = 255
+    lines[107, 100:161] = 255
+
+    _, openings = find_openings(segments, lines, _blank(200), thickness=10)
+
+    assert [o.kind for o in openings] == ["window"]
+
+
+def test_glass_wall_longer_than_a_door_is_a_window() -> None:
+    # 180 px of glazing on a 400 px image: wider than any door (150 px here) but a
+    # plausible shopfront glass wall.
+    segments = [WallSegment("horizontal", 100, 0, 100), WallSegment("horizontal", 100, 280, 400)]
+    lines = _blank(200, 400)
+    lines[97, 100:281] = 255
+    lines[103, 100:281] = 255
+
+    _, openings = find_openings(segments, lines, _blank(200, 400), thickness=10)
+
+    assert [(o.kind, o.span.start, o.span.end) for o in openings] == [("window", 100, 280)]
+
+
 def test_wide_gap_without_symbol_is_not_bridged() -> None:
     segments = [WallSegment("horizontal", 100, 0, 100), WallSegment("horizontal", 100, 220, 600)]
 

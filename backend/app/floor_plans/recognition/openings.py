@@ -22,11 +22,19 @@ MAX_OPENING_RATIO = 15
 # wall, so gaps up to this fraction of the image's long side are also bridged,
 # but only when a door arc or window glazing confirms them.
 MAX_OPENING_IMAGE_RATIO = 0.25
+# Windows may be whole glass walls, so gaps up to this fraction of the image's
+# long side are bridged when glazing runs along them; doors keep the limit above.
+MAX_WINDOW_IMAGE_RATIO = 0.5
 # A line along the gap counts as window glazing when this fraction of it is dark.
 GLAZING_LINE_COVERAGE = 0.6
 # Windows are drawn with at least this many separate parallel lines; a single
 # line across a gap is usually a door threshold.
 MIN_GLAZING_LINES = 2
+# Glazing is looked for within these multiples of the wall thickness on each side
+# of the wall line: first the wall itself, then a little wider for window frames
+# drawn wider than the wall. The tight band comes first because on thin walls the
+# wider one reaches floor-color edges.
+GLAZING_BAND_RATIOS = (0.5, 0.75)
 # Glazing is a few thin lines; if more of the band than this is covered, it is a
 # filled area (e.g. a floor color) rather than a window.
 MAX_GLAZING_LINE_FRACTION = 0.7
@@ -63,8 +71,7 @@ def find_openings(
     """
     symbols = _Symbols(lines, details, thickness, wall_pixels)
     min_gap = MIN_OPENING_RATIO * thickness
-    image_gap = MAX_OPENING_IMAGE_RATIO * max(lines.shape)
-    max_gap = max(MAX_OPENING_RATIO * thickness, image_gap)
+    max_gap = max(symbols.max_door_gap, MAX_WINDOW_IMAGE_RATIO * max(lines.shape))
     walls, openings = _bridge_collinear_gaps(segments, min_gap, max_gap, symbols)
     walls, end_openings = _bridge_gaps_to_walls(walls, min_gap, max_gap, symbols)
     return walls, openings + end_openings
@@ -83,6 +90,9 @@ class _Symbols:
         self.lines = lines
         self.thickness = thickness
         self.min_gap = MIN_OPENING_RATIO * thickness
+        self.max_door_gap = max(
+            MAX_OPENING_RATIO * thickness, MAX_OPENING_IMAGE_RATIO * max(lines.shape)
+        )
         # Dark arcs are thin in ``lines``; colored arcs only show in ``details``.
         max_radius = MAX_OPENING_IMAGE_RATIO * max(lines.shape)
         self.arcs = [
@@ -96,9 +106,11 @@ class _Symbols:
         A door covers what its arcs swing across (two arcs for a double door). A
         leftover under one wall thickness at a gap end is a door frame and joins the
         door; a longer one is checked for glazing (e.g. a storefront window beside
-        the entrance) and otherwise stays wall. An empty list means no symbol.
+        the entrance) and otherwise stays wall. Gaps too wide for a door can only
+        be windows (glass walls). An empty list means no symbol.
         """
-        spans = swing_spans(self.arcs, gap, self.thickness)
+        door_sized = gap.end - gap.start <= self.max_door_gap
+        spans = swing_spans(self.arcs, gap, self.thickness) if door_sized else []
         if spans:
             start = min(s for s, _ in spans)
             end = max(e for _, e in spans)
@@ -209,9 +221,12 @@ def _overlaps(gap: WallSegment, other: WallSegment) -> bool:
     )
 
 
-def _wall_band(lines: np.ndarray, segment: WallSegment, thickness: int) -> np.ndarray:
-    """Pixels within the wall's thickness along the segment, one column per step."""
-    half = thickness / 2 + 1
+def _wall_band(
+    lines: np.ndarray, segment: WallSegment, thickness: int, ratio: float = 0.5
+) -> np.ndarray:
+    """Pixels within ``ratio`` x thickness of the wall line along the segment, one
+    column per step."""
+    half = ratio * thickness + 1
     across = slice(max(0, round(segment.offset - half)), round(segment.offset + half) + 1)
     along = slice(int(segment.start) + 1, int(segment.end))
     if segment.orientation == "horizontal":
@@ -220,9 +235,15 @@ def _wall_band(lines: np.ndarray, segment: WallSegment, thickness: int) -> np.nd
 
 
 def _has_glazing(lines: np.ndarray, gap: WallSegment, thickness: int) -> bool:
-    # Glazing lies within the wall's own thickness; looking further would pick up
-    # edges of the floor colors on either side.
-    band = _wall_band(lines, gap, thickness)
+    return any(
+        _has_glazing_in_band(_wall_band(lines, gap, thickness, ratio), thickness)
+        for ratio in GLAZING_BAND_RATIOS
+    )
+
+
+def _has_glazing_in_band(band: np.ndarray, thickness: int) -> bool:
+    # Glazing lies within the wall (or its window frame); looking further would
+    # pick up edges of the floor colors on either side.
     if band.size == 0:
         return False
     covered = (band > 0).mean(axis=1) >= GLAZING_LINE_COVERAGE
