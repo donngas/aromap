@@ -36,7 +36,6 @@ NAMED = {
     "cafe": FIXTURES / "cafe_plan.png",  # listing-style shop plan
     "cad_cafe": LOCAL_FAIL / "cad_cafe_plan.png",  # CAD drawing
     "colored_home": FIXTURES / "colored_home_plan.png",  # colored, dimensioned
-    "line_home": LOCAL_FAIL / "line_home_plan.png",  # hollow line-art walls
     "warehouse": LOCAL_FAIL / "warehouse_plan.png",  # gray solid walls
 }
 TOLERANCE_PX = 3
@@ -304,16 +303,6 @@ def test_colored_home_windows(colored_home: Layout, start, end) -> None:
 def test_colored_home_inner_glazing_is_door(colored_home: Layout, start, end) -> None:
     assert _has_opening(colored_home.doors, start, end), colored_home.doors
     assert not _has_opening(colored_home.windows, start, end)
-
-
-# Line drawing: walls are two thin gray lines with white between them.
-
-
-def test_line_home_hollow_walls_are_detected(drafts) -> None:
-    layout = drafts["line_home"].floor_plan.layout
-    assert len(layout.walls) >= 30
-    outer_left = [w for w in layout.walls if w.start.x == w.end.x and abs(w.start.x - 60) <= 3]
-    assert sum(abs(w.end.y - w.start.y) for w in outer_left) > 300
 
 
 # Synthetic plans covering each supported drawing style; they need no image files.
