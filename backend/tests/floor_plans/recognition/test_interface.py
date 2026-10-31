@@ -17,6 +17,7 @@ PASS_IMAGES = [
     FIXTURES / "colored_home_plan.png",
     FIXTURES / "three_bed_home_plan.png",
     FIXTURES / "ground_floor_plan.png",
+    FIXTURES / "porch_house_plan.png",
 ]
 # Images in fixtures/local/fail are git-ignored (unclear or unrecorded redistribution
 # rights; see local/SOURCES.md) and recognized poorly. Their tests are skipped when
@@ -34,6 +35,7 @@ NAMED = {
     "cafe": FIXTURES / "cafe_plan.png",  # listing-style shop plan
     "three_bed_home": FIXTURES / "three_bed_home_plan.png",  # bold walls, many rooms
     "ground_floor": FIXTURES / "ground_floor_plan.png",  # CAD-style, corner column markers
+    "porch_house": FIXTURES / "porch_house_plan.png",  # half-open doors, dashed passage
     "cad_cafe": LOCAL_FAIL / "cad_cafe_plan.png",  # CAD drawing
     "colored_home": FIXTURES / "colored_home_plan.png",  # colored, dimensioned
     "warehouse": LOCAL_FAIL / "warehouse_plan.png",  # gray solid walls
@@ -333,6 +335,37 @@ def test_ground_floor_has_five_doors_and_one_outline(drafts) -> None:
     layout = drafts["ground_floor"].floor_plan.layout
     assert len(layout.doors) == 5  # kitchen and living passages have no door symbol
     assert layout.indoor_domain is not None
+
+
+# House with a front porch: half-open doors drawn as a leaf with a short arc.
+
+
+@pytest.mark.parametrize(
+    "start, end",
+    [
+        ((1358, 302), (1494, 302)),  # mechanical room, half open
+        ((1305, 585), (1305, 691)),  # pantry, half open
+        ((1774, 484), (1869, 484)),  # linen closet, half open, hinged at the wall face
+        ((918, 1414), (1054, 1414)),  # front door
+        ((1869, 319), (1869, 455)),  # laundry outside door
+    ],
+)
+def test_porch_house_doors(drafts, start, end) -> None:
+    doors = drafts["porch_house"].floor_plan.layout.doors
+    assert _has_opening(doors, start, end), doors
+
+
+def test_porch_house_counts_and_open_passage(drafts) -> None:
+    layout = drafts["porch_house"].floor_plan.layout
+    assert (len(layout.doors), len(layout.windows)) == (13, 6)
+    # The kitchen-to-laundry passage is drawn with dashed lines: open floor.
+    passage = [
+        o
+        for o in layout.doors + layout.windows
+        if abs(o.start.x - 1305) <= TOLERANCE_PX and abs(o.end.x - 1305) <= TOLERANCE_PX
+    ]
+    assert not any(o.start.y < 461 and o.end.y > 325 for o in passage), passage
+    assert layout.indoor_domain is not None and len(layout.indoor_domain.boundary) == 4
 
 
 # Synthetic plans covering each supported drawing style; they need no image files.
