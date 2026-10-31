@@ -16,7 +16,7 @@ from app.simulations.engine.models import EngineOutput, PreparedSimulation, Reso
 from app.simulations.engine.state import grid_signature, initial_concentrations
 from app.simulations.errors import PreparationError, SimulationError
 
-SOLVER_VERSION = "square-balance-airflow-v2"
+SOLVER_VERSION = "square-balance-airflow-v3"
 
 
 @dataclass(frozen=True)

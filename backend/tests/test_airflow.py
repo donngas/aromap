@@ -242,3 +242,18 @@ def test_explicit_exterior_door_far_from_boundary_fails():
     body['placements'][0]['position_m'] = {'x': 1, 'y': 1}
     with pytest.raises(PreparationError, match='not near the indoor boundary'):
         _prepare(SimulationConfiguration.model_validate(body), {'A1': 1})
+
+
+def test_mixing_presets_and_medium_default_are_resolved_and_recorded():
+    from app.simulations.models import SimulationConfiguration
+    from app.simulations.limits import MIXING_PRESETS_M2_PER_S
+    for name, expected in MIXING_PRESETS_M2_PER_S.items():
+        body = _config().model_dump()
+        body['settings']['effective_diffusivity_m2_per_s'] = None
+        body['settings']['mixing_preset'] = name
+        result = _prepare(SimulationConfiguration.model_validate(body), {'A1': 1})
+        assert result.input.parameters.effective_diffusivity_m2_per_s == expected
+        assert any(f'Mixing preset {name}:' in item for item in result.input.assumptions)
+    body['settings']['mixing_preset'] = None
+    result = _prepare(SimulationConfiguration.model_validate(body), {'A1': 1})
+    assert result.input.parameters.effective_diffusivity_m2_per_s == MIXING_PRESETS_M2_PER_S['medium']

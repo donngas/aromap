@@ -19,7 +19,7 @@ from app.simulations.errors import PreparationError
 from app.simulations.geometry import resolve_geometry
 from app.simulations.limits import (
     DEFAULT_CELL_SIZE_M, DEFAULT_DIFFUSIVITY_M2_PER_S, DEFAULT_REMOVAL_RATE_PER_S, DEFAULT_SAMPLE_INTERVAL_S,
-    ExecutionLimits, PreparationLimits,
+    ExecutionLimits, PreparationLimits, MIXING_PRESETS_M2_PER_S,
 )
 from app.simulations.models import (
     DiffuserPlacement, EmissionSource, ModelParameters, ResolvedEmissionProfile,
@@ -114,7 +114,7 @@ def _prepare_input(
 
     diffusion = configuration.settings.effective_diffusivity_m2_per_s
     if configuration.settings.mixing_preset is not None:
-        diffusion = {"low": 0.001, "medium": 0.005, "high": 0.013}[configuration.settings.mixing_preset]
+        diffusion = MIXING_PRESETS_M2_PER_S[configuration.settings.mixing_preset]
     removal = configuration.conditions.removal_rate_per_s
     diffusion = diffusion if diffusion is not None else effective_diffusivity_m2_per_s
     removal = removal if removal is not None else removal_rate_per_s
@@ -151,7 +151,9 @@ def _prepare_input(
         ],
         "initial_state_fingerprint": None,
     }
-    if configuration.settings.effective_diffusivity_m2_per_s is None:
+    if configuration.settings.mixing_preset is not None:
+        payload["assumptions"].append(f"Mixing preset {configuration.settings.mixing_preset}: {diffusion} m²/s; rounded literature-based scenario, not measured residual mixing.")
+    elif configuration.settings.effective_diffusivity_m2_per_s is None:
         payload["assumptions"].append(f"Caller/default effective spreading: {diffusion} m²/s; provisional mixing parameter, not molecular diffusivity.")
     if configuration.conditions.removal_rate_per_s is None:
         payload["assumptions"].append(f"Caller/default uniform removal: {removal} /s ({removal * 3600} air changes/hour equivalent).")
@@ -159,7 +161,7 @@ def _prepare_input(
         f"Airflow: outdoor conditions {configuration.airflow.outdoor_conditions}, "
         f"wind direction {configuration.airflow.wind_direction_degrees} degrees toward; "
         f"{len(configuration.airflow.devices)} recirculating devices. "
-        "Opening exchange and fan strength use uncalibrated engineering presets; background removal excludes modeled openings."
+        "Opening exchange, wind potential, and fan/AC strength and shape use uncalibrated engineering presets; background removal excludes modeled openings."
     )
     fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
     return SimulationInput(input_fingerprint=fingerprint, **payload)

@@ -434,7 +434,7 @@ Provisional physical parameters in `simulations/limits.py`:
 
 | Parameter | Default and basis |
 | --- | --- |
-| Effective spreading | 0.005 m²/s, an engineering preset within the 0.001–0.013 m²/s turbulent diffusion range measured by [Cheng et al. (2011)](https://pubmed.ncbi.nlm.nih.gov/21456572/). Suggested exploration presets span approximately 0.001–0.015 m²/s; these are not hard scientific bounds or measured values for a submitted layout. |
+| Effective spreading | 0.0045 m²/s, the rounded median of 11 fitted estimates in two residences in [Cheng et al. (2011)](https://pubmed.ncbi.nlm.nih.gov/21456572/). Low/high use rounded quartiles; the study's full range was approximately 0.001–0.013 m²/s. These are scenario choices, not measured values for a submitted layout. |
 | Uniform removal | 0.5 air changes/hour, converted to 0.5/3600 per second. This is an illustrative residential assumption, informed by variable residential measurements discussed in [this air-exchange study](https://pmc.ncbi.nlm.nih.gov/articles/PMC5369024/), not an inference from the floor plan. No additional chemical or surface loss is added. |
 
 The spreading parameter represents unresolved mixing, not molecular diffusion or
@@ -887,9 +887,13 @@ unit height. Incoming outdoor air has zero modeled fragrance. These exchange
 velocities are illustrative, not experimentally calibrated, and apply in addition
 to net flow. Room-wide removal represents *other* background ventilation and
 must not include the same openings again. A recirculating fan or A/C is not
-fresh-air ventilation. Mixing presets map low/medium/high to 0.001/0.005/0.013
+fresh-air ventilation. Mixing presets map low/medium/high to 0.002/0.0045/0.006
 m²/s effective diffusivity; they represent unresolved mixing rather than purely
-molecular diffusion ([Cheng et al.](https://pubmed.ncbi.nlm.nih.gov/21456572/)).
+molecular diffusion. These rounded quartiles are based on 11 experiments in two
+residences, without independently separating the explicit fan contribution, and
+are not validated as residual mixing in this 2D solver. See the [calibration
+investigation](docs/airflow-calibration.md) for reproducible calculations,
+comparisons, and the limits of the window and device presets.
 
 Optional request fields, preserving the original request format when omitted:
 
