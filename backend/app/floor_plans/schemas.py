@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.errors import ErrorDetail
 from app.floor_plans.models import RecognitionDraft
@@ -12,8 +12,8 @@ from app.floor_plans.models import RecognitionDraft
 class UploadedImage(BaseModel):
     image_id: str
     image_url: str
-    width_px: int
-    height_px: int
+    width_px: int = Field(description="Orientation-normalized image width in pixels.")
+    height_px: int = Field(description="Orientation-normalized image height in pixels.")
     media_type: Literal["image/png"] = "image/png"
     expires_at: datetime
 
@@ -35,5 +35,9 @@ class RecognitionStatus(BaseModel):
     created_at: datetime
     updated_at: datetime
     expires_at: datetime
-    result: RecognitionDraft | None = None
+    result: RecognitionDraft | None = Field(
+        default=None,
+        description="On success: editable pixel geometry and nullable estimated pixel indoor domain."
+                    " No metric coordinates or inferred calibration are returned.",
+    )
     error: ErrorDetail | None = None

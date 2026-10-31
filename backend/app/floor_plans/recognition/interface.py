@@ -28,6 +28,9 @@ def recognize_floor_plan(image_path: Path) -> RecognitionDraft:
     Output:
         Return RecognitionDraft with generated layout/geometry IDs, revision 1,
         matching image dimensions, reference_image=None, and calibration=None.
+        Layout.indoor_domain is an estimated PixelIndoorDomain in prepared-image
+        pixels, or None with a warning if estimation is unavailable. The frontend
+        lets users review/correct it and later converts it to meters.
         Map any internal resizing/rotation back to the input pixel coordinates.
         Follow the geometry rules in floor_plans.models, including splitting
         walls at crossings and T-junctions and assigning openings to final walls.
