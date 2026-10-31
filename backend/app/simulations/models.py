@@ -12,19 +12,24 @@ class ContractModel(BaseModel):
 class MetricPoint(ContractModel):
     """Meters, top-left origin, x rightward and y downward; FE applies scale."""
 
-    x: float
-    y: float
+    x: float = Field(description="Horizontal distance in meters from the calibrated image origin; rightward.")
+    y: float = Field(description="Vertical distance in meters from the calibrated image origin; downward.")
 
 
 class IndoorDomain(ContractModel):
-    """Draft footprint polygon; vertices in boundary order, closing edge implied.
+    """Metric simulation footprint, not the pixel-domain recognition estimate.
 
+    Vertices are in boundary order; closing edges are implicit.
     Holes exclude outdoor/unusable areas. Polygon topology is checked by future
     preparation, not inferred from the image rectangle by this contract.
     """
 
-    boundary: list[MetricPoint] = Field(min_length=3)
-    holes: list[list[MetricPoint]] = Field(default_factory=list)
+    boundary: list[MetricPoint] = Field(
+        min_length=3, description="Ordered outer perimeter vertices in meters, after FE calibration.",
+    )
+    holes: list[list[MetricPoint]] = Field(
+        default_factory=list, description="Excluded interior polygons in meters; not internal rooms/walls.",
+    )
 
     @model_validator(mode="after")
     def holes_have_vertices(self):
@@ -35,19 +40,19 @@ class IndoorDomain(ContractModel):
 
 class WallGeometry(ContractModel):
     id: str = Field(min_length=1)
-    start: MetricPoint
-    end: MetricPoint
+    start: MetricPoint = Field(description="Wall start in meters, not image or display pixels.")
+    end: MetricPoint = Field(description="Wall end in meters, not image or display pixels.")
 
 
 class OpeningGeometry(ContractModel):
     id: str = Field(min_length=1)
     wall_id: str = Field(min_length=1)
-    start: MetricPoint
-    end: MetricPoint
+    start: MetricPoint = Field(description="Opening start on its parent wall, in meters.")
+    end: MetricPoint = Field(description="Opening end on its parent wall, in meters.")
 
 
 class MetricGeometry(ContractModel):
-    indoor_domain: IndoorDomain
+    indoor_domain: IndoorDomain = Field(description="User-reviewed indoor footprint converted to meters by FE.")
     walls: list[WallGeometry] = Field(default_factory=list)
     doors: list[OpeningGeometry] = Field(default_factory=list)
     windows: list[OpeningGeometry] = Field(default_factory=list)
@@ -56,7 +61,7 @@ class MetricGeometry(ContractModel):
 class DiffuserPlacement(ContractModel):
     placement_id: str = Field(min_length=1)
     definition_id: str = Field(min_length=1)
-    position_m: MetricPoint
+    position_m: MetricPoint = Field(description="Source placement in meters; not recognition pixels.")
     strength_override: float | None = Field(default=None, ge=0)
     enabled: bool = True
     operating_hours_per_day_override: float | None = Field(default=None, gt=0, le=24)
@@ -79,7 +84,9 @@ class SimulationSettings(ContractModel):
     duration_s: float = Field(gt=0)
     sample_interval_s: float | None = Field(default=None, gt=0)
     sample_times_s: list[float] | None = None
-    grid_cell_size_m: float | None = Field(default=None, gt=0)
+    grid_cell_size_m: float | None = Field(
+        default=None, gt=0, description="Requested cell side length in meters, independent of image resolution.",
+    )
     effective_diffusivity_m2_per_s: float | None = Field(default=None, gt=0)
 
     @model_validator(mode="after")
@@ -103,7 +110,9 @@ class SimulationConfiguration(ContractModel):
     source estimation, open-window behavior, and engine limits remain future work.
     """
 
-    geometry_m: MetricGeometry
+    geometry_m: MetricGeometry = Field(
+        description="All geometry coordinates in meters, converted by FE; no image pixels or calibration required.",
+    )
     diffuser_definitions: list[ConsumerDiffuserDefinition] = Field(default_factory=list)
     placements: list[DiffuserPlacement] = Field(min_length=1)
     opening_states: list[OpeningState] = Field(default_factory=list)
@@ -133,26 +142,26 @@ class SimulationConfiguration(ContractModel):
 
 
 class MetricWall(BaseModel):
-    start: MetricPoint
-    end: MetricPoint
+    start: MetricPoint = Field(description="Resolved wall start in meters.")
+    end: MetricPoint = Field(description="Resolved wall end in meters.")
 
 
 class MetricOpening(BaseModel):
     wall_index: int = Field(ge=0)
-    start: MetricPoint
-    end: MetricPoint
+    start: MetricPoint = Field(description="Resolved doorway start in meters.")
+    end: MetricPoint = Field(description="Resolved doorway end in meters.")
 
 
 class SimulationGeometry(BaseModel):
-    width_m: float = Field(gt=0)
-    height_m: float = Field(gt=0)
+    width_m: float = Field(gt=0, description="Resolved domain width in meters.")
+    height_m: float = Field(gt=0, description="Resolved domain height in meters.")
     walls: list[MetricWall]
     open_doorways: list[MetricOpening]
 
 
 class EmissionSource(BaseModel):
     placement_id: str
-    position_m: MetricPoint
+    position_m: MetricPoint = Field(description="Resolved emission-source position in meters.")
     rate_relative_units_per_s: float = Field(ge=0)
 
 
