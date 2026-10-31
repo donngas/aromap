@@ -317,7 +317,7 @@ Settings default to a one-hour duration; a supplied `duration_s` must be positiv
 Omit both sampling fields for automatic sampling. Otherwise supply at most one:
 `sample_interval_s` must be positive and no greater than the duration, while
 `sample_times_s` must be nonempty, strictly increasing, and within the duration.
-Omitted grid size resolves to **0.25 m (25 cm)**; requests can override it. Omitted
+Omitted grid size uses an automatic workload/geometry policy starting at **0.25 m (25 cm)**; explicit requests override it. Omitted
 spreading and removal resolve to provisional defaults of **0.0045 m²/s** and
 **0.5 ACH**. These are modeling assumptions, not measurements for the submitted
 space.
@@ -479,17 +479,21 @@ neighbor concentration differences approximate diffusive exchange, and no-flux
 boundaries prevent leakage. Using new-time values gives implicit backward Euler.
 `engine/solver.py:simulate(prepared, options=None)` assembles a sparse transport
 matrix and uses [SciPy SuperLU](https://docs.scipy.org/doc/scipy/reference/generated/scipy.sparse.linalg.splu.html).
-One factorization is reused for all steps and placement channels, including residual
-channels with no active emission. Float64 working states become float32 snapshots;
+Each factorization is shared by all placement channels, including residual
+channels with no active emission. Startup and main stages use at most two
+factorizations in total; the previous factor is released before its replacement. Float64 working states become float32 snapshots;
 non-finite values, material negatives, and float32 overflow fail explicitly. Tiny
 negative roundoff is clipped to zero and its added quantity is recorded.
 
 The simulation timeline is authoritative. Backend-only `SolverOptions` defaults
-to a maximum 0.25-second step, additionally capped by `0.25*h²/D` and `0.05/k` (no
-removal cap when `k=0`). These are provisional accuracy controls, not stability
-requirements or scientific constants. The duration is divided into equal steps
-no larger than that cap, reaching the exact end with one reusable matrix. Runs
-requiring more than 200,000 steps are rejected before factorization.
+to a maximum 2-second step, additionally capped by `duration/4`, `0.25*h²/D`,
+`0.05/k` (when removal is nonzero), `0.2*h/max_edge_velocity`, and
+`0.25/max_cell_opening_loss`. Opening losses are summed per cell. These are provisional accuracy controls, not stability
+requirements or scientific constants. Main steps divide the duration evenly.
+The first main intervals covering at least two seconds (or the entire shorter
+run) are subdivided into steps no larger than 0.125 s to resolve startup. This
+schedule is independent of output times. Runs requiring more than 200,000
+total steps, including startup, are rejected before factorization.
 
 Requested heatmap times do not alter integration: snapshots between computed
 states use linear interpolation. The engine always advances the full duration,
@@ -508,10 +512,12 @@ with a deadline, but does not enforce a hard RSS cap.
 Tests cover conservation, source accumulation, decay, walls/doors/holes, per-placement
 superposition and residuals, spatial/time refinement, and independence from snapshot
 schedule. These validate the numerical model, not real-world scent perception.
-An early-time check on a small point-source layout compared the default 0.25-second
-step with a 0.015625-second reference: the relative field L1 difference at one second
-was about 3%. The former 2-second candidate gave about 29% and was rejected. This
-is a convergence check on that layout, not a universal accuracy guarantee.
+Short runs use at least four main intervals; startup substeps also protect early
+snapshots in longer runs. The
+stronger device presets required reducing the advection accuracy cap from 0.5
+to 0.2 cell transit times to pass the existing <1% time-refinement test. See the
+[calibration record](docs/airflow-calibration.md) for measured numerical errors,
+coarsening tradeoffs, and reproducible sweeps.
 
 Repeatable Linux smoke benchmarks, from `backend/`:
 
@@ -849,59 +855,52 @@ independently of recognition using predefined layouts under `tests/fixtures/layo
 
 ### Idealized airflow
 
-Airflow is a steady 2D scenario, not measured room airflow or CFD. Diffuser
-concentration remains a height-averaged relative quantity per square meter. The
-model adds one signed air flux per connected cell edge, measured in m²/s per
-unit room height. Each fan or recirculating A/C contributes its own localized
-Gaussian initial velocity. Both types use the same strength-to-speed presets
-(0.025, 0.05, or 0.1 m/s for low, medium, or high), with a 1 m radius per fan and
-a 1.5 m radius per A/C. Contributions from multiple devices are combined. These
-are illustrative engineering presets, not device specifications. Direction angles
-are degrees clockwise from image right (y down).
+Airflow is a steady 2D scenario, not CFD. Conservative projected device pushes
+and exterior potentials drive upwind fragrance transport on the wall-blocked
+cell graph. Angles are clockwise from image right (y down), toward the flow.
+A/C is recirculating airflow only; it does not model cooling or fresh-air supply.
 
-The initial edge fluxes are projected to satisfy incompressible mass conservation.
-The continuous analogue is `u = u* - grad(phi)`, `laplacian(phi) = div(u*)`;
-the graph discretization solves a sparse Laplacian with no wall-normal flow and
-specified idealized exterior potentials. Phi is a correction velocity potential,
-not a calibrated physical pressure. The sparse graph equation is solved with
-Jacobi-preconditioned conjugate gradients, relative tolerance 1e-10, absolute
-tolerance 1e-14, at most 10,000 iterations, and deadline checks. Nonconvergence
-fails with `airflow_failed` and suggests a coarser grid or simpler layout. A
-conservative projection working-set estimate is checked before allocation; this
-is not a hard process RSS limit. Projection and scent-solver peak estimates are
-checked separately because their temporary matrices do not coexist. A synthetic
-40 m square, 25 cm grid (25,600 cells), one-fan projection took about 0.27 s on
-the development machine; this is not a deployment performance guarantee. This follows
-the projection principle in
-[Vreman (2014)](https://doi.org/10.1016/j.jcp.2014.01.035); one projection of a
-prescribed push is not a Navier–Stokes calculation. Wind presets yield approximate
-potential amplitudes 0, 0.02, 0.05 m/s for calm, moderate, breezy. They do not
-predict actual wind pressures or window ventilation. Wall geometry and grid
-resolution limit how faithfully flow turns around obstacles.
+| Type | Low | Medium | High | Gaussian radius |
+| --- | ---: | ---: | ---: | ---: |
+| Fan push coefficient | 0.08 m/s | 0.16 m/s | 0.28 m/s | 1 m |
+| A/C push coefficient | 0.10 m/s | 0.20 m/s | 0.35 m/s | 1.5 m |
 
-The scent solver uses conservative first-order upwind finite-volume advection;
-see [NIST FiPy finite-volume equations](https://pages.nist.gov/fipy/en/stable/numerical/discret.html).
-This can introduce numerical spreading; refinement comparisons are necessary.
-On one 4 m square test with a medium fan, 60 s duration and 0.005 m²/s background
-mixing, area-integrated relative field L1 differences versus 10 cm cells were
-about 28% at 40 cm and 18% at 20 cm. The default 25 cm grid differed by about
-22% from a 12.5 cm run of the same case. A 0.25 s time step differed from 0.0625 s
-by about 0.1% on the 20 cm grid. These comparisons include source discretization
-and are neither real-world validation nor a universal error bound; near-source
-plume shape and results on other layouts can vary substantially.
-An opening removes scent in net outgoing flow and, separately, a balanced two-way
-exchange equivalent to 0.001, 0.003, or 0.006 m/s times represented width per
-unit height. Incoming outdoor air has zero modeled fragrance. These exchange
-velocities are illustrative, not experimentally calibrated, and apply in addition
-to net flow. Room-wide removal represents *other* background ventilation and
-must not include the same openings again. A recirculating fan or A/C is not
-fresh-air ventilation. Mixing presets map low/medium/high to 0.002/0.0045/0.006
-m²/s effective diffusivity; they represent unresolved mixing rather than purely
-molecular diffusion. These rounded quartiles are based on 11 experiments in two
-residences, without independently separating the explicit fan contribution, and
-are not validated as residual mixing in this 2D solver. See the [calibration
-investigation](docs/airflow-calibration.md) for reproducible calculations,
-comparisons, and the limits of the window and device presets.
+| Binary open type | Calm exchange | Moderate exchange | Breezy exchange |
+| --- | ---: | ---: | ---: |
+| Window | 0.004 m/s | 0.012 m/s | 0.025 m/s |
+| Exterior door | 0.006 m/s | 0.018 m/s | 0.035 m/s |
+
+Exchange multiplies physical opening width, giving m²/s per unit room height.
+Net outgoing flow separately removes fragrance; incoming outdoor concentration
+is zero. Background removal must exclude modeled openings. Interior open doors
+connect rooms without applying outdoor loss. State remains binary open/closed.
+
+Wind potential amplitudes are 0/0.06/0.15 m²/s for calm/moderate/breezy, with
+window/door resistance lengths 2/1 m. These are model potentials, not outdoor
+wind speeds. Internal conductance is face length / cell separation (1 on the
+square grid); exterior conductance includes half-cell distance. This fixes the
+previous strong grid dependence of ventilation. Local air balance is enforced by
+Jacobi-preconditioned conjugate gradients; resource/nonconvergence errors remain.
+
+The automatic grid policy targets 6000 cells, reduced smoothly for channel count
+and simulated duration, and considers bounding-box storage and output budgets.
+It rounds cell sizes upward in 0.05 m increments from the default base to 1 m.
+Open-aperture widths and footprint connectivity constrain coarsening. Source,
+device and exterior-opening mapping failures trigger refinement toward the base;
+interior-door connectivity is checked after exterior classification. Quality safeguards
+can exceed the target cell count; existing hard resource limits still apply.
+Explicit `grid_cell_size_m` bypasses automatic selection. Grid changes require
+state reconciliation before continuation; automatic state migration is not added.
+
+Preset selection used half/baseline/double coefficient sweeps, radius and layout
+sensitivity checks, uniform tracer decay, pulse mixing, grid refinement, and
+production timestep comparisons. These are numerically calibrated demo scenarios,
+not validation against measured fragrance. Upwind numerical spreading and
+near-source concentration remain resolution-sensitive. The [calibration
+record](docs/airflow-calibration.md) documents decisions, selected results, and
+reproduction commands; [raw results](docs/airflow-calibration-results.json) include
+all recorded comparisons. Background mixing remains 0.002/0.0045/0.006 m²/s
+for low/medium/high, with medium as default.
 
 Optional request fields, preserving the original request format when omitted:
 
