@@ -3,12 +3,14 @@ import math
 
 from app.simulations.geometry import polygon_for
 
+TARGET_CELL_COUNT = 10_000
+
 
 def automatic_cell_size(geometry, *, base_cell_m, channels, duration_s, samples, limits):
     polygon = polygon_for(geometry.indoor_domain)
     left, top, right, bottom = polygon.bounds
     # Bound solve work as channels/duration grow, and bound dense output too.
-    target = 6000 / math.sqrt(max(1, channels)) * min(1., math.sqrt(3600 / duration_s))
+    target = TARGET_CELL_COUNT / math.sqrt(max(1, channels)) * min(1., math.sqrt(3600 / duration_s))
     target = min(target, limits.max_cells, limits.max_output_bytes / (4 * max(1, channels) * samples + 1))
     desired = math.sqrt((right - left) * (bottom - top) / max(1., target))
     # Small increments avoid large jumps in quality at area thresholds.

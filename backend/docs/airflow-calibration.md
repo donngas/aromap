@@ -3,7 +3,7 @@
 ## Current demo presets — 2026-11-01
 
 This section supersedes the historical investigation below. Solver version is
-`square-balance-airflow-v5`; preparation version is `square-center-grid-v4`.
+`square-balance-airflow-v5`; preparation version is `square-center-grid-v5`.
 The scope is the backend engine and API. Opening state remains binary. Values
 are engineering scenario calibration for a hackathon demo, not experimental
 validation or predictions of perceived fragrance.
@@ -138,7 +138,30 @@ Explicit `settings.grid_cell_size_m` still wins, with the existing 0.1–1 m
 validation. Otherwise start at the caller's base (normally 0.25 m), and choose
 from 0.05 m increments up to 1 m. The workload target is
 
-`target_cells = 6000 / sqrt(max(1, channels)) * min(1, sqrt(3600 / duration_s))`.
+`target_cells = 10000 / sqrt(max(1, channels)) * min(1, sqrt(3600 / duration_s))`.
+
+The spatial budget was raised from 6,000 to 10,000 after the timestep speedup
+left room for finer spatial detail. Before rounding or feature safeguards, this
+reduces the selected cell width by about 23% when above the 0.25 m baseline.
+It does not change the temporal policy, physical coefficients or explicit overrides.
+
+For one channel and up to one simulated hour, representative bounding-area
+thresholds are:
+
+| Cell size | Maximum bounding area before the next increment |
+| --- | ---: |
+| 0.25 m | 625 m² |
+| 0.30 m | 900 m² |
+| 0.35 m | 1,225 m² |
+| 0.40 m | 1,600 m² |
+| 0.50 m | 2,500 m² |
+| 0.75 m | 5,625 m² |
+
+Intermediate sizes still use 0.05 m increments. Multiply these area thresholds
+by `1/sqrt(channels) * min(1, sqrt(3600/duration_s))` for other workloads.
+For example, three channels over six hours target about 2,357 cells rather than
+1,414; a 15 × 15 m bounding box now selects 0.35 m rather than 0.40 m before
+feature safeguards. Output budgets and the 1 m upper resolution limit still apply.
 
 Also constrain the target by the configured cell and dense-output byte limits.
 Choose `h >= sqrt(bounding_box_area / target_cells)`. Bounding-box area is used
@@ -181,7 +204,12 @@ reference. Fast flows automatically select smaller steps. No endpoint or new
 required request field is introduced. Resolved grid assumptions and solver
 step/count diagnostics expose the policy; solver/preparation versions changed.
 
-### Performance and spatial quality check
+### Performance and spatial quality check (original 6,000-cell policy)
+
+The saved calibration JSON and timings below record preparation v4, before the
+10,000-cell adjustment. Its explicit-grid comparisons remain applicable; its
+automatic-grid benchmark is historical and should not be read as a timing for
+the finer default.
 
 On this development machine, the existing apartment benchmark (20 × 15 m,
 four channels, one simulated hour, 121 snapshots, no airflow) changed from

@@ -1,7 +1,24 @@
 """Quality and override contracts for automatic resolution."""
+import pytest
+
 from tests.test_simulation_preparation import configuration, OPTIONS
 from app.simulations.preparation import prepare_run
 from app.simulations.models import OpeningState, OpeningGeometry, WallGeometry
+from app.simulations.limits import PreparationLimits
+from app.simulations.resolution import automatic_cell_size
+
+
+@pytest.mark.parametrize('side,expected', [(25,.25),(25.01,.3),(30,.3),(35,.35),(40,.4),(50,.5)])
+def test_single_channel_hour_spatial_thresholds(side, expected):
+    config = configuration(side, side)
+    assert automatic_cell_size(config.geometry_m, base_cell_m=.25, channels=1,
+                               duration_s=3600, samples=121, limits=PreparationLimits()) == expected
+
+
+def test_three_channel_six_hour_case_gets_one_finer_increment():
+    config = configuration(15, 15)
+    assert automatic_cell_size(config.geometry_m, base_cell_m=.25, channels=3,
+                               duration_s=21600, samples=600, limits=PreparationLimits()) == .35
 
 
 def test_small_spaces_keep_baseline_large_spaces_coarsen_and_explicit_wins():
@@ -55,7 +72,7 @@ def test_exterior_door_does_not_trigger_interior_connectivity_refinement():
     config.geometry_m.doors = [OpeningGeometry.model_validate({'id':'d','wall_id':'outer','boundary_kind':'exterior','start':{'x':14.6,'y':0},'end':{'x':15.4,'y':0}})]
     config.opening_states = [OpeningState(opening_id='d',is_open=True)]
     run = prepare_run(config, **OPTIONS)
-    assert run.grid.cell_size_m == .4
+    assert run.grid.cell_size_m == .3
     assert {edge.kind for edge in run.exterior_openings} == {'door'}
     assert not any('no represented cell connection' in warning for warning in run.grid.warnings)
 
@@ -64,10 +81,10 @@ def test_automatic_grid_refines_for_device_in_thin_footprint_extension():
     import pytest
     from app.simulations.models import MetricPoint, AirflowSettings
     from app.simulations.errors import PreparationError
-    config = configuration(30, 30)
+    config = configuration(40, 40)
     config.placements[0].position_m = MetricPoint(x=2,y=2)
     config.geometry_m.indoor_domain.boundary = [MetricPoint(x=x,y=y) for x,y in
-        [(0,0),(30,0),(30,30),(1,30),(1,.18),(0,.18)]]
+        [(0,0),(40,0),(40,40),(1,40),(1,.18),(0,.18)]]
     assert prepare_run(config, **OPTIONS).grid.cell_size_m == .4
     config.airflow = AirflowSettings.model_validate({'devices':[{
         'id':'fan','type':'fan','position_m':{'x':.1,'y':.1},'direction_degrees':0}]})

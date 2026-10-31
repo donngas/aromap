@@ -936,7 +936,7 @@ square grid); exterior conductance includes half-cell distance. This fixes the
 previous strong grid dependence of ventilation. Local air balance is enforced by
 Jacobi-preconditioned conjugate gradients; resource/nonconvergence errors remain.
 
-The automatic grid policy targets 6000 cells, reduced smoothly for channel count
+The automatic grid policy targets 10,000 cells, reduced smoothly for channel count
 and simulated duration, and considers bounding-box storage and output budgets.
 It rounds cell sizes upward in 0.05 m increments from the default base to 1 m.
 Open-aperture widths and footprint connectivity constrain coarsening. Source,
