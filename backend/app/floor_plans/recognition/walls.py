@@ -18,6 +18,9 @@ MIN_LENGTH_RATIO = 3
 # perpendicular wall: corner returns beside windows and jambs beside doors.
 # Free-standing short blocks (display stands, counters) are still ignored.
 MIN_STUB_LENGTH_RATIO = 1
+# After corners are snapped, pieces shorter than this multiple of the thickness
+# are leftovers of a wall's own width (e.g. anti-aliased edges), not walls.
+MIN_PIECE_RATIO = 0.5
 # Components thicker than this multiple of the wall thickness are filled
 # regions (e.g. solid counters or shelving), not walls.
 MAX_THICKNESS_RATIO = 2
@@ -68,7 +71,18 @@ def detect_walls(mask: np.ndarray, thickness: int) -> list[WallSegment]:
         if _meets_perpendicular(stub, walls, thickness) and not _is_covered(stub, walls, thickness)
     ]
     segments = _merge_collinear(walls + stubs, tolerance=thickness)
-    return _snap_endpoints(segments, tolerance=thickness)
+    return snap_corners(segments, thickness)
+
+
+def snap_corners(segments: list[WallSegment], thickness: int) -> list[WallSegment]:
+    """Move wall ends onto nearby perpendicular walls so corners meet, then drop
+    pieces that collapse to (almost) nothing.
+
+    Run again after openings are bridged: walls completed by bridging (e.g. a
+    storefront with windows near both corners) only then reach their corners.
+    """
+    snapped = _snap_endpoints(segments, tolerance=thickness)
+    return [s for s in snapped if s.end - s.start >= MIN_PIECE_RATIO * thickness]
 
 
 def _segments(mask: np.ndarray, length: int, thickness: int) -> list[WallSegment]:

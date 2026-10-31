@@ -25,7 +25,7 @@ from app.floor_plans.recognition.topology import (
     find_parent,
     split_at_junctions,
 )
-from app.floor_plans.recognition.walls import WallSegment, detect_walls
+from app.floor_plans.recognition.walls import WallSegment, detect_walls, snap_corners
 
 # Supported input is a clean digital plan with walls thicker than other lines
 # (see backend README). When at least this fraction of wall-like length is
@@ -56,6 +56,7 @@ def recognize(image_path: Path) -> RecognitionDraft:
         segments, openings = find_openings(
             segments, line_mask(image), detail_mask(image), thickness, mask
         )
+        segments = snap_corners(segments, thickness)
         kept = drop_small_groups(segments)
         if len(kept) < len(segments):
             warnings.append(

@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from app.floor_plans.recognition.preprocess import wall_mask
-from app.floor_plans.recognition.walls import WallSegment, detect_walls
+from app.floor_plans.recognition.walls import WallSegment, detect_walls, snap_corners
 
 TOLERANCE_PX = 2
 
@@ -71,3 +71,26 @@ def test_short_corner_return_is_kept_but_free_block_is_not() -> None:
     assert returns[0].end >= 70
     assert all(s.offset != 104.5 for s in segments)
 
+
+def test_slightly_wider_wall_spots_are_not_short_pieces() -> None:
+    # A 10 px storefront wall that is 11 px wide in a few rows (anti-aliasing):
+    # its own width must not read as short wall pieces that split the wall.
+    mask = np.zeros((300, 100), dtype=np.uint8)
+    mask[20:280, 45:55] = 255
+    mask[100:103, 44:55] = 255
+    mask[200:202, 45:56] = 255
+
+    segments = detect_walls(mask, thickness=10)
+
+    assert len(segments) == 1, segments
+
+
+def test_snap_corners_trims_overhang_past_a_later_wall() -> None:
+    # The side wall ends at the wall's outer edge (y=230); the bottom wall, found
+    # only after its windows were bridged, runs along y=221.
+    side = WallSegment("vertical", 100, 20, 230)
+    bottom = WallSegment("horizontal", 221, 0, 100)
+
+    snapped = snap_corners([side, bottom], thickness=18)
+
+    assert WallSegment("vertical", 100, 20, 221) in snapped
