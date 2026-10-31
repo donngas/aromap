@@ -55,6 +55,20 @@ def test_estimates_wall_thickness(shop_plan: np.ndarray) -> None:
     assert 9 <= thickness <= 13  # drawn at 11 px
 
 
+def test_wall_thickness_ignores_many_bold_thin_lines() -> None:
+    # A 15 px shop outline, plus far more bold 3 px lines (tables, chairs, labels)
+    # than wall: the walls still set the thickness.
+    mask = np.zeros((600, 600), dtype=np.uint8)
+    cv2.rectangle(mask, (50, 50), (550, 550), 255, 15)
+    for y in range(80, 530, 12):
+        cv2.line(mask, (80, y), (520, y), 255, 3)
+
+    thickness = estimate_wall_thickness(mask)
+
+    assert thickness is not None
+    assert 13 <= thickness <= 17
+
+
 def test_wall_mask_removes_thin_details(shop_plan: np.ndarray) -> None:
     mask, _ = wall_mask(shop_plan)
 
