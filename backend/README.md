@@ -1,8 +1,9 @@
 # Aromap backend
 
 FastAPI backend with domain packages. This is groundwork: models are draft
-contracts, not a finished API or simulation implementation. No domain endpoints,
-recognition provider, solver, job runner, storage provider, or AI provider exist yet.
+contracts, not a finished API or simulation implementation. Floor-plan recognition
+has an initial OpenCV implementation; no domain endpoints, solver, job runner,
+storage provider, or AI provider exist yet.
 
 ## Local development
 
@@ -114,8 +115,10 @@ The authoritative callable contract is in
 [`app/floor_plans/recognition/interface.py`](app/floor_plans/recognition/interface.py);
 the output schema and geometry conventions live in
 [`app/floor_plans/models.py`](app/floor_plans/models.py).
-The callable is currently an explicit unimplemented stub. A provider should live
-in a sibling module and be called through this entry point.
+The callable delegates to the OpenCV pipeline in
+[`app/floor_plans/recognition/pipeline.py`](app/floor_plans/recognition/pipeline.py),
+which detects axis-aligned walls plus doors and windows from gaps in them.
+Other providers should also live in sibling modules behind this entry point.
 
 ```python
 from pathlib import Path

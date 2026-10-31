@@ -1,8 +1,10 @@
-"""Recognition handoff contract; provider implementation is still pending."""
+"""Recognition handoff contract, delegating to the OpenCV pipeline."""
 
 from pathlib import Path
 
 from app.floor_plans.models import RecognitionDraft
+from app.floor_plans.recognition import pipeline
+from app.floor_plans.recognition.preprocess import InvalidImageError
 
 
 class RecognitionError(Exception):
@@ -36,7 +38,11 @@ def recognize_floor_plan(image_path: Path) -> RecognitionDraft:
         Unreadable input or processing failure raises RecognitionError, chaining
         the underlying exception when appropriate. Never return None.
 
-    This stub intentionally raises NotImplementedError until a provider is wired.
-    Implement recognition in a sibling module and delegate from this entry point.
+    The implementation lives in ``pipeline``; this entry point maps its errors.
     """
-    raise NotImplementedError("Floor-plan recognition is not implemented yet")
+    try:
+        return pipeline.recognize(image_path)
+    except InvalidImageError as exc:
+        raise RecognitionError(str(exc)) from exc
+    except Exception as exc:
+        raise RecognitionError("Floor-plan recognition failed") from exc
