@@ -55,6 +55,10 @@ export type SetupStep = (typeof SETUP_STEPS)[number]
 
 export type ProjectStep = 'diffusers' | SetupStep | 'workspace'
 
+/** Selectable simulation lengths; the backend allows up to 6 hours. */
+export const SIMULATION_HOURS = [1, 2, 3, 4, 5, 6] as const
+export type SimulationHours = (typeof SIMULATION_HOURS)[number]
+
 export interface ProjectDocument {
   schemaVersion: typeof PROJECT_SCHEMA_VERSION
   id: string
@@ -74,6 +78,8 @@ export interface ProjectDocument {
   indoor: IndoorBoundary | null
   /** Display-only settings. wallThickness null means the default for the image. */
   view: { wallThickness: number | null; showImage: boolean }
+  /** Simulated duration for every scenario, so their results compare. */
+  simulationHours: SimulationHours
   /** Furthest page reached, where "continue" resumes. */
   step: ProjectStep
 }
@@ -103,6 +109,7 @@ export function createProject(plan: ProjectDocument['plan']): ProjectDocument {
     calibration: null,
     indoor: null,
     view: { wallThickness: null, showImage: true },
+    simulationHours: 1,
     step: 'diffusers',
   }
 }
@@ -120,7 +127,8 @@ export function normalizeProject(doc: ProjectDocument): ProjectDocument {
     if (!calibration) step = 'calibration'
     else if (step === 'workspace' && !indoor) step = 'indoor'
   }
-  return { ...doc, calibration, indoor, step }
+  const simulationHours = SIMULATION_HOURS.includes(doc.simulationHours) ? doc.simulationHours : 1
+  return { ...doc, calibration, indoor, simulationHours, step }
 }
 
 /** Next unused "배치안 N" name. */

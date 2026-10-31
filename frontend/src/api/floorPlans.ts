@@ -33,7 +33,8 @@ export function errorMessage(code: string, fallback?: string): string {
   return MESSAGES[code] ?? fallback ?? '요청을 처리하지 못했어요.'
 }
 
-async function request<T>(input: string, init?: RequestInit): Promise<T> {
+/** JSON request to the backend; failures become an ApiError with a user-facing message. */
+export async function request<T>(input: string, init?: RequestInit): Promise<T> {
   let response: Response
   try {
     response = await fetch(input, init)

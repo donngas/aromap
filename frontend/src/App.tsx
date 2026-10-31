@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import './App.css'
 import { ApiError, uploadPlanImage } from './api/floorPlans.ts'
 import type { DiffuserDraft } from './diffusers/types.ts'
@@ -6,6 +6,7 @@ import type { RecognitionDraft } from './floorPlan/layout.ts'
 import { loadPlanImage, type PlanImage } from './floorPlan/loadImage.ts'
 import { useRecognition, type RecognitionState } from './floorPlan/useRecognition.ts'
 import { DiffuserPage } from './pages/DiffuserPage.tsx'
+import { HomePage } from './pages/HomePage.tsx'
 import { LandingPage } from './pages/LandingPage.tsx'
 import { ResumePage } from './pages/ResumePage.tsx'
 import { SetupPage } from './pages/SetupPage.tsx'
@@ -19,12 +20,17 @@ const STEPS = ['평면도', '디퓨저', '공간 설정', '작업 공간']
 
 const isSetupStep = (step: string): step is SetupStep => (SETUP_STEPS as readonly string[]).includes(step)
 
-type Phase = 'landing' | 'resume' | 'flow'
+// home: first screen; intro: service introduction (scroll page), reached from
+// home and returning to it; resume/flow: the app after "내 공간 시작하기".
+type Phase = 'home' | 'intro' | 'resume' | 'flow'
+
+// Every screen past home shares one history entry pushed on top of home's, so
+// the browser's back button always returns to home (and from home leaves the site).
+const APP_ENTRY = { aromap: 'app' }
+const onAppEntry = () => (window.history.state as typeof APP_ENTRY | null)?.aromap === APP_ENTRY.aromap
 
 export default function App() {
-  // Started once; the landing page gives it plenty of time to finish.
-  const [savedPromise] = useState(loadProject)
-  const [phase, setPhase] = useState<Phase>('landing')
+  const [phase, setPhase] = useState<Phase>('home')
   const [saved, setSaved] = useState<{ data: SavedProject; thumbnailUrl: string } | null>(null)
   const [resumeBusy, setResumeBusy] = useState(false)
   const [resumeError, setResumeError] = useState<string | null>(null)
@@ -63,13 +69,45 @@ export default function App() {
     }
   }
 
-  async function start() {
+  useEffect(() => {
+    const onPopState = () => {
+      // Forward onto the app entry: step back down so home stays the base.
+      if (onAppEntry()) {
+        window.history.back()
+        return
+      }
+      setPhase('home')
+      window.scrollTo(0, 0)
+    }
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [])
+
+  const leaveHome = (next: Phase) => {
+    window.history.pushState(APP_ENTRY, '')
+    setPhase(next)
     window.scrollTo(0, 0)
-    const data = await savedPromise
+  }
+
+  async function start() {
+    // Work already open in this visit simply continues.
+    if (project) {
+      leaveHome('flow')
+      return
+    }
+    window.history.pushState(APP_ENTRY, '')
+    window.scrollTo(0, 0)
+    // Loaded fresh each time: an earlier visit may have deleted the saved work.
+    const data = await loadProject()
+    // Back was pressed while loading.
+    if (!onAppEntry()) return
+    if (saved) URL.revokeObjectURL(saved.thumbnailUrl)
+    setResumeError(null)
     if (data) {
       setSaved({ data, thumbnailUrl: URL.createObjectURL(data.image) })
       setPhase('resume')
     } else {
+      setSaved(null)
       setPhase('flow')
     }
   }
@@ -118,7 +156,9 @@ export default function App() {
     setImageId(uploadedId)
   }
 
-  if (phase === 'landing') return <LandingPage onStart={() => void start()} />
+  if (phase === 'home') return <HomePage onIntro={() => leaveHome('intro')} onStart={() => void start()} />
+  // Same as the browser's back button, so the history stays home + one entry.
+  if (phase === 'intro') return <LandingPage onBack={() => window.history.back()} />
 
   const layout = project?.recognition?.layout ?? null
   const showWorkspace = project?.step === 'workspace' && layout && planImage
@@ -144,7 +184,6 @@ export default function App() {
         plan={planImage}
         project={project}
         layout={layout}
-        warnings={project.recognition!.warnings}
         saveStatus={saveStatus}
         onChange={updateProject}
       />

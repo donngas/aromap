@@ -577,4 +577,19 @@
   position: absolute;
   top: 12px;
   right: 12px;
+  display: flex;
+  gap: 6px;
+}
+
+.viewer__hint {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  margin: 0;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 13px;
+  transform: translateX(-50%);
+  pointer-events: none;
 }
