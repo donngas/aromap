@@ -1,8 +1,9 @@
 """Draft geometry contracts. Topology validation is not implemented yet."""
 
+from math import isfinite
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class PixelPoint(BaseModel):
@@ -32,6 +33,14 @@ class PixelIndoorDomain(BaseModel):
         default_factory=list,
         description="Excluded interior polygons in pixels, e.g. courtyards; each closes implicitly.",
     )
+
+
+    @model_validator(mode="after")
+    def finite_coordinates(self):
+        for ring in (self.boundary, *self.holes):
+            if any(not isfinite(point.x) or not isfinite(point.y) for point in ring):
+                raise ValueError("Indoor domain vertices must have finite pixel coordinates")
+        return self
 
 
 class ReferenceImage(BaseModel):

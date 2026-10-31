@@ -238,6 +238,7 @@ runtime state, outside portable frontend saves.
 `result.floor_plan.layout.indoor_domain` is an estimated **pixel-coordinate**
 footprint for user review/correction, or `null` with a warning when unavailable.
 Its shape is `{ "boundary": [PixelPoint, ...], "holes": [[PixelPoint, ...], ...] }`.
+All indoor-domain vertex coordinates must be finite pixel values; NaN and infinity are rejected.
 Each ring has at least three ordered vertices and closes implicitly; the outer
 boundary may be concave (e.g. an L-shaped plan). Holes exclude areas such as outdoor
 courtyards, not ordinary rooms or internal walls. Initially there is one outer
@@ -407,7 +408,8 @@ these are grid approximations, not a fitted mesh.
 
 `PreparationLimits` provides adjustable operational defaults: 100,000 bounding cells,
 600 samples, 16 enabled placements, 10,000 geometry elements (ring vertices plus
-segment endpoints), and 256 MiB estimated sampled payload. Estimates count float32
+segment endpoints), and 256 MiB estimated sampled payload. Sampled `EngineOutput`
+concentrations must use float32; solver working arrays may use higher precision. Estimates count float32
 concentration plus a boolean mask, not sparse-solver working memory or file overhead.
 Cost checks precede grid allocation and source resolution. Actual runtime/worker
 limits remain part of solver/job integration.
@@ -438,6 +440,10 @@ window at completion. Active jobs remain pollable past their provisional expiry;
 cleanup never removes their inputs. Files/metadata are retained internally while
 referenced by a surviving job even if the public upload URL has expired. Terminal
 jobs/results and unreferenced expired uploads are removed on startup and periodically.
+Missing files are tolerated; individual filesystem failures are logged and retried.
+Unregistered upload/result files (including interrupted temporary writes) are pruned
+after one retention window of file age. Registered artifacts and pending job results
+are protected, and fresh uploads have time to finish registering.
 A successful browser save must not depend on any of these temporary resources.
 
 ## Modules and models

@@ -173,3 +173,31 @@ def test_resource_limits_run_before_source_resolution():
         with pytest.raises(PreparationError) as error:
             prepare_input(configuration(), **{**OPTIONS, "resolve_source": unexpected_resolver, "limits": limits})
         assert error.value.code == "resource_limit"
+
+
+def test_sampled_output_dtype_matches_payload_budget():
+    from app.simulations.engine.models import EngineOutput
+
+    config = configuration(0.25, 0.25)
+    config.settings.sample_interval_s = 1
+    run = prepare_run(config, limits=PreparationLimits(max_output_bytes=9), **OPTIONS)
+    times = np.asarray(run.input.sample_times_s)
+    values = np.zeros((2, 1, 1, 1), dtype=np.float32)
+    output = EngineOutput(run.grid, times, values)
+    assert output.concentration.nbytes + run.grid.active_mask.nbytes == run.estimated_output_bytes == 9
+    with pytest.raises(ValueError, match="float32"):
+        EngineOutput(run.grid, times, values.astype(np.float64))
+
+
+def test_pixel_indoor_domain_rejects_nonfinite_vertices():
+    from pydantic import ValidationError
+    from app.floor_plans.models import PixelIndoorDomain
+
+    ring = [{"x": 0, "y": 0}, {"x": 1, "y": 0}, {"x": 0, "y": 1}]
+    for value in (float("nan"), float("inf"), float("-inf")):
+        invalid = [*ring[:2], {"x": 0, "y": value}]
+        for body in ({"boundary": invalid}, {"boundary": ring, "holes": [invalid]}):
+            with pytest.raises(ValidationError, match="finite pixel coordinates"):
+                PixelIndoorDomain.model_validate(body)
+    domain = PixelIndoorDomain(boundary=ring, holes=[ring])
+    assert PixelIndoorDomain.model_validate_json(domain.model_dump_json()) == domain

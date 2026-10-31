@@ -50,7 +50,7 @@ class PreparedSimulation:
 
 @dataclass(frozen=True)
 class EngineOutput:
-    """Future solver output: float concentration[T,P,H,W], no URLs/job IDs.
+    """Future solver output: float32 concentration[T,P,H,W], no URLs/job IDs.
 
     Entries outside the active mask are zero. Output values and encoding remain
     the solver/artifact writer's responsibility; this is not a time-stepper.
@@ -58,10 +58,12 @@ class EngineOutput:
 
     grid: PreparedGrid
     sample_times_s: NDArray[np.float64]
-    concentration: NDArray[np.floating]
+    concentration: NDArray[np.float32]
     diagnostics: tuple[str, ...] = ()
 
     def __post_init__(self):
+        if self.concentration.dtype != np.dtype(np.float32):
+            raise ValueError("Sampled concentration must use float32 to respect the output budget")
         shape = (len(self.sample_times_s), len(self.grid.source_weights), self.grid.rows, self.grid.columns)
         if self.sample_times_s.ndim != 1 or self.concentration.shape != shape:
             raise ValueError("Engine output must align with time, placement channels, and grid")
