@@ -1,0 +1,34 @@
+name: Test staging stack
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  staging:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      COMPOSE_PROJECT_NAME: aromap-ci-staging
+      FRONTEND_PORT: 5173
+      BACKEND_PORT: 8000
+      API_PROXY_TARGET: http://backend:8000
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start production-style staging stack
+        run: docker compose -f compose.yaml -f compose.staging.yaml up -d --build --wait --wait-timeout 120
+      - name: Run backend tests in development image
+        run: docker compose -p aromap-ci-tests run --build --rm --no-deps backend uv run --locked pytest -q
+      - name: Smoke-test frontend proxy and recognition
+        run: python3 scripts/smoke_staging.py
+      - name: Show staging logs on failure
+        if: failure()
+        run: docker compose -f compose.yaml -f compose.staging.yaml logs --no-color
+      - name: Remove temporary staging stack and volume
+        if: always()
+        run: docker compose -f compose.yaml -f compose.staging.yaml down -v --remove-orphans
+      - name: Remove temporary test stack and volume
+        if: always()
+        run: docker compose -p aromap-ci-tests down -v --remove-orphans
