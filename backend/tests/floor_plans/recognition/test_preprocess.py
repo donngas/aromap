@@ -80,6 +80,21 @@ def test_wall_mask_removes_thin_details(shop_plan: np.ndarray) -> None:
     assert mask[200, 550] == 255
 
 
+def test_wall_mask_keeps_inner_walls_half_as_thick() -> None:
+    # 9 px outer walls with a stockroom partition drawn 4 px thick.
+    image = np.full((400, 600, 3), 255, dtype=np.uint8)
+    gray = (60, 60, 60)
+    for top_left, bottom_right in [((40, 40), (560, 48)), ((40, 352), (560, 360)),
+                                   ((40, 40), (48, 360)), ((552, 40), (560, 360))]:
+        cv2.rectangle(image, top_left, bottom_right, gray, cv2.FILLED)
+    cv2.rectangle(image, (400, 40), (403, 200), gray, cv2.FILLED)
+
+    mask, thickness = wall_mask(image)
+
+    assert thickness == 9
+    assert mask[120, 398:407].any()  # the partition survives
+
+
 def test_wall_mask_is_empty_without_dark_strokes() -> None:
     blank = np.full((100, 100, 3), 255, dtype=np.uint8)
 

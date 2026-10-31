@@ -36,8 +36,9 @@ HOLLOW_WALL_HALF_WIDTH_RATIO = 0.01
 # Strokes thinner than this (px) are never treated as walls.
 MIN_WALL_THICKNESS_PX = 3
 # Strokes thinner than this fraction of the estimated wall thickness are removed.
-# Kept low because interior walls are often thinner than exterior walls.
-MIN_THICKNESS_RATIO = 0.4
+# Kept low because interior walls are often thinner than exterior walls (e.g. a
+# stockroom drawn at half the outer wall's width).
+MIN_THICKNESS_RATIO = 0.35
 
 
 class InvalidImageError(ValueError):
