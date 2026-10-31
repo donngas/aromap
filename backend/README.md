@@ -292,8 +292,9 @@ fixtures, not simulated data or working download links.
 pixel geometry, calibration, other scenarios, or entire project document.
 Every placement has a stable `placement_id` and `definition_id`; definitions contain
 raw capacity/units/lifetime/operating-hour inputs and provenance. Missing product
-information is allowed for later fallback resolution; no conversion to relative
-emission is implemented here. These product fields use API snake_case names;
+information is allowed and standalone preparation resolves fallback relative rates.
+Optional `density_g_per_ml` supports volume conversion. The HTTP endpoint still
+does not execute preparation/simulation. Product fields use API snake_case names;
 the FE's saved input format need not match them.
 
 The initial footprint representation is an `indoor_domain` polygon `boundary` with
@@ -360,12 +361,12 @@ The standalone entry points in `app/simulations/preparation.py` are:
 - `prepare_run(...)` additionally builds a `PreparedGrid` and estimates sampled
   output bytes. Neither function touches HTTP, SQLite, jobs, or artifact files.
 
-The caller must supply a model version, a source resolver, and explicit spreading/
-removal parameters when they are absent from the request. Source resolution is
-injected as `resolve_source(definition, placement) -> ResolvedEmissionProfile`.
-It must handle strength/operating overrides and record assumptions. No consumer
-capacity-to-emission formula, operating schedule, or scientific default is invented
-by preparation. Constant resolved emission profiles are supported initially.
+The caller supplies a model version. The default source resolver is
+`simulations/emissions.py:resolve_emission`; callers may replace it through
+`resolve_source(definition, placement) -> ResolvedEmissionProfile`. It handles
+strength/rated-hour overrides and records assumptions. Provisional spreading and
+removal defaults resolve below; request values override caller defaults. There is
+no operating schedule or numerical solver yet.
 
 Interval-based sampling includes zero and the duration, appending a final partial
 interval when needed; explicit sample timestamps are preserved. Numerical solver
@@ -395,8 +396,9 @@ Walls must be split at junctions, and overlapping walls/openings are rejected.
 Each enabled placement initially maps to its containing active cell with weight 1.
 Sources outside usable space, on closed walls, without an active containing cell,
 or separated from that cell's center by a barrier are rejected rather than snapped
-across barriers. Disabled placements are excluded;
-source/channel order otherwise follows request order. `PreparedGrid.expand()` maps
+across barriers. Disabled emitters are excluded; zero-start source/channel order
+follows request order. Resolved initial state may retain additional residual
+channels in its explicit order. `PreparedGrid.expand()` maps
 compact active-cell values back to rectangular arrays with zero outside the mask.
 Arrays prepared for the solver are read-only. No particle transport or flux/time
 calculation has been implemented.
@@ -407,17 +409,120 @@ approximation. Finer geometry is not guaranteed accurate merely by smooth render
 these are grid approximations, not a fitted mesh.
 
 `PreparationLimits` provides adjustable operational defaults: 100,000 bounding cells,
-600 samples, 16 enabled placements, 10,000 geometry elements (ring vertices plus
-segment endpoints), and 256 MiB estimated sampled payload. Sampled `EngineOutput`
-concentrations must use float32; solver working arrays may use higher precision. Estimates count float32
+600 samples, 16 channels (including residual channels), 10,000 geometry elements
+(ring vertices plus segment endpoints), 6-hour duration, 0.10–1 m cells, and
+256 MiB estimated sampled payload with a warning above 64 MiB. Requests default to
+1 hour and automatic 30-second sampling (or the shorter duration). When this would
+exceed the sample cap, automatic sampling uses evenly spaced times within the cap,
+including zero and the final time. Omitted sampling stays automatic through JSON
+round trips. Explicit intervals/timestamps are preserved and rejected if over the
+cap; they are never silently coarsened. Sampling is independent of the future
+solver time step. Sampled `EngineOutput`
+concentrations must use float32, be finite/nonnegative, and be zero outside the
+active domain. Output timestamps must be nonempty, finite, nonnegative, and strictly
+increasing. The boundary rejects invalid values rather than silently correcting
+them; any roundoff correction belongs to the solver. Output channel metadata is
+always resolved to an explicit tuple. Solver working arrays may use higher precision. Estimates count float32
 concentration plus a boolean mask, not sparse-solver working memory or file overhead.
-Cost checks precede grid allocation and source resolution. Actual runtime/worker
-limits remain part of solver/job integration.
+Duration/resolution/output checks precede source resolution and grid allocation.
+`ExecutionLimits` sets a provisional 120-second runtime budget and 512 MiB working
+memory budget. Preparation checks an array working-set estimate before building
+the grid; a future solver must account for its additional sparse/native allocations
+and call deadline checks. Invalid, non-finite, negative, or over-budget memory
+estimates are rejected. These are guards, not an OS memory cap or hard process
+timeout. Hard worker timeout enforcement remains part of job integration.
+
+Provisional physical parameters in `simulations/limits.py`:
+
+| Parameter | Default and basis |
+| --- | --- |
+| Effective spreading | 0.005 m²/s, an engineering preset within the 0.001–0.013 m²/s turbulent diffusion range measured by [Cheng et al. (2011)](https://pubmed.ncbi.nlm.nih.gov/21456572/). Suggested exploration presets span approximately 0.001–0.015 m²/s; these are not hard scientific bounds or measured values for a submitted layout. |
+| Uniform removal | 0.5 air changes/hour, converted to 0.5/3600 per second. This is an illustrative residential assumption, informed by variable residential measurements discussed in [this air-exchange study](https://pmc.ncbi.nlm.nih.gov/articles/PMC5369024/), not an inference from the floor plan. No additional chemical or surface loss is added. |
+
+The spreading parameter represents unresolved mixing, not molecular diffusion or
+directional airflow. Keep transport separate from sources/removal for future
+velocity fields driven by fans or A/C; a recirculating fan is not automatically
+fresh-air exchange. Door width affects represented connections, without a second
+width multiplier. Window size alone cannot determine ventilation: pressure, wind,
+and thermal driving forces also matter ([NIST CONTAM documentation](https://www.nist.gov/publications/contam-user-guide-and-program-documentation-version-34)).
 
 `EngineOutput` defines the future `[T,P,H,W]` array boundary and diagnostics; there
 is no solver callable yet. Job execution, artifact encoding, and endpoint activation
 will follow the numerical implementation. Existing simulation endpoints still return
 their documented unavailable/not-found responses.
+
+### Emission policy (implemented) and future research candidates
+
+One relative unit represents a surrogate for 1 mg of consumed formulation, not
+measured fragrance mass or perceived scent strength. Source rates use relative
+units/s; the 2D fields use relative units/m². Keep the same unit across runs.
+The implemented `consumption-v1` baseline is usable refill mass divided by stated
+operating lifetime: `capacity_g * 1000 / (lifetime_days * rated_hours_per_day * 3600)`.
+Volume requires a density conversion; absent density, 1 g/mL is an explicitly
+recorded fallback assumption. Missing usable consumption data falls back to an
+explicit reference source of 1 g/day. These fallbacks are engineering choices,
+not universal measured properties. Water-tank capacity is not fragrance capacity.
+Supported estimation covers reed/passive and recognized evaporative liquid/electric
+types. Unknown types, ultrasonic, nebulizer, candle, and gel products currently use
+the reference fallback with a reason. Their capacity alone is not treated as a
+compatible emission model. Gram inputs need no density. Passive reeds resolve to
+24 hours/day, recording ignored non-24-hour ratings. Other supported types use the
+placement rated-hours override, then product rated hours, then 24. Explicit
+`strength_override` multiplies the rate, including zero; intensity labels are not
+interpreted as multipliers.
+
+For now, environmental/product correction multipliers are **1**. Do not infer
+numerical multipliers from intensity labels. Preserve the resolver boundary for
+future calibrated strength and environmental corrections, with reference conditions
+and provenance so lifetime-based estimates are not corrected twice for the same
+effect. Rated operating hours describe the lifetime estimate; future on/off
+schedules are separate. Initial runs assume constant emission while enabled.
+
+Prioritize the following factors when data becomes available. This is a practical
+research priority, not a universal ranking of effects across all products:
+
+| Factor | Scientific basis / potential relationship | Data needed before applying a correction |
+| --- | --- | --- |
+| Formulation and device type | [Chemical Product Evaporation Model study](https://www.mdpi.com/2076-3417/12/6/3112) models chemical/product properties and product mass loss. | Relevant refill mass, composition, device mechanism, or measured loss rates; avoid applying one device model to all types. |
+| Temperature | [Reed-diffuser chamber study](https://doi.org/10.1016/j.xcrp.2024.102142) investigates temperature-dependent emissions; [NIST α-pinene data](https://webbook.nist.gov/cgi/cbook.cgi?ID=C80568&Mask=4) illustrates Antoine vapor-pressure coefficients with valid temperature ranges. | Known formulation/representative compound or measured product temperature response, plus reference temperature. Pure-compound vapor pressure alone is not a whole-product emission model. |
+| Local air movement | [RIVM mass-transfer description](https://www.rivm.nl/en/consumer-exposure-to-chemical-substances/exposure-models/dustex/equations-describing-emission-and-transfer-of-substance-indoors) relates exposed area, transfer coefficient, and surface-to-air concentration difference, with stated applicability limits. | Local velocity/geometry and an applicable transfer correlation; whole-room ventilation does not determine local transfer. |
+| Reed/wick geometry and transport | [RIVM air-freshener fact sheet, section 6.10](https://www.rivm.nl/bibliotheek/rapporten/2021-0233.pdf) describes capillary delivery, exposed reeds, and continuous release; the reed-diffuser chamber study models transport parameters. | Dimensions, material, exposed area, and supporting measurements; reed count alone does not justify a linear multiplier. |
+
+Age/depletion and humidity remain later, product-specific research candidates.
+Do not add a generic temperature, airflow, humidity, or reed-count correction
+without supporting coefficients. These references motivate future work; their
+equations are not currently implemented. Whenever a scientific formula/default is
+implemented, document its exact source, units, applicable range, assumptions, and
+adaptation to the 2D model alongside it. Label chosen defaults separately from
+measured/calibrated values.
+
+### Initial state and future continuation
+
+The solver boundary defaults to zero via `engine/state.py:initial_concentrations`.
+`prepare_run(..., initial_state=ResolvedInitialState(...))` also accepts an internal,
+already-reconciled compact `[channel, active_cell]` concentration array. It validates
+finite nonnegative values, matching grid topology/model version, unique channel
+identities, and inclusion of all current emitting sources. It copies input values
+into a read-only snapshot; the initial-state digest participates in the run input
+fingerprint. `PreparedSimulation.channels` and explicit `EngineOutput.channels`
+can include residual channels with no current emitter. A future solver must use
+these identities instead of assuming channel count equals emitter count.
+`initial_concentrations` returns a fresh writable float64 solver array.
+No initial-state HTTP field, checkpoint endpoint, or migration is implemented.
+
+A future continuation resolver must validate units, grid/domain compatibility,
+model versions, elapsed time, and channel identity, and produce engine-ready
+per-channel concentrations. It may need to reconcile new/moved/disabled/deleted
+placements or migrate state across geometry/grid changes; migration policy is
+outside current scope. New channels can start at zero, but residual concentrations
+from disabled/deleted sources must survive with zero further emission. Stable
+channel identity and initial concentrations must therefore remain separate from
+the list of currently emitting sources. `prepare_run` supports residual-only runs
+with every placement disabled or removed, but only when supplied a valid resolved
+initial state. Without that state, a zero-source run is rejected. Automatic channel
+reconciliation and migration remain continuation work; the HTTP API has no state
+handoff yet.
+Do not use an expiring job ID as the sole definition of a continuation state.
 
 ## Jobs, expiry, and restart behavior
 
@@ -452,7 +557,7 @@ A successful browser save must not depend on any of these temporary resources.
 | --- | --- | --- |
 | `floor_plans` | Image endpoints, preparation, recognition orchestration | `UploadedImage`, recognition DTOs, `RecognitionDraft`, `Layout`, `PixelIndoorDomain` |
 | `floor_plans/recognition` | Image-to-editable-geometry implementation | Existing `Path → RecognitionDraft` boundary |
-| `diffusers` | Relative emission definitions and future examples | `DiffuserDefinition` |
+| `diffusers` | Raw consumer product specifications | `ConsumerDiffuserDefinition` |
 | `simulations` | Metric contracts, resolved inputs, grid preparation; future solver | `SimulationRequest`, `SimulationInput`, `PreparedGrid`, `EngineOutput`, `SimulationResult` |
 | `advice` | Future on-demand interpretation | `AdviceRequest.configuration`, `AdviceResponse` |
 | `infrastructure` | Local storage, SQLite, job execution, upload-body limit | Operational resources, not project ownership |
@@ -534,16 +639,16 @@ The endpoint still returns `calibration: null`; actual calibration is frontend-o
    implement the estimated indoor domain; verify pixel geometry against prepared images.
 2. **Engine prototype:** start independently with predefined metric layouts and
    sources. Choose the numerical approach and validate boundaries and behavior.
-3. **Preparation:** connect the implemented metric input/grid preparation to chosen
-   source-estimation policies and numerical parameters; refine details after the
-   prototype and agree with FE on artifact encoding.
+3. **Preparation refinement:** benchmark the implemented consumption resolver,
+   provisional defaults, resource guards, and initial-state boundary alongside the
+   prototype; agree with FE on artifact encoding.
 4. **Simulation delivery:** connect the placeholder routes to queued execution, sampled-field artifacts, result
    retrieval, and correlation with submitted configurations.
 5. **Advice and reliability:** add on-demand interpretation, execution limits,
    recovery improvements, and representative end-to-end checks.
 
-Recognition can progress alongside engine work. Detailed physical assumptions,
-consumer-spec emission conversion, and final DTOs remain design work. Browser
+Recognition can progress alongside engine work. Numerical integration, supported
+environmental corrections, and final delivery DTO details remain design work. Browser
 persistence/export stays frontend-owned; no backend project storage is planned.
 
 ## Coordinates and future simulation flow
@@ -597,7 +702,7 @@ the solver and HTTP execution path remain pending.
 
 The HTTP contract now describes grid alignment, channel/time/array ordering,
 relative units, and request correlation; actual field encoding and numerical
-defaults remain to be agreed with the engine prototype. Advice accepts explicit configuration
+integration remain to be agreed with the engine prototype. Advice accepts explicit configuration
 context, not the browser's project document.
 
 Results will represent approximate relative concentrations under stated assumptions,
