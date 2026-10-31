@@ -1,5 +1,8 @@
 import json
-import sqlite3
+import io
+import time
+
+import numpy as np
 from pathlib import Path
 
 import pytest
@@ -64,19 +67,53 @@ def test_status_lifecycle_contract():
     }}).error
 
 
-def test_placeholder_endpoints_and_swagger(tmp_path):
+def test_simulation_endpoints_and_swagger(tmp_path):
     with TestClient(create_app(Settings(data_dir=tmp_path))) as client:
-        response = client.post("/api/simulations", json=example("request"))
-        assert response.status_code == 503
-        assert response.json()["detail"]["code"] == "simulation_unavailable"
-        with sqlite3.connect(tmp_path / "registry.sqlite3") as db:
-            assert db.execute("SELECT COUNT(*) FROM jobs WHERE kind='simulation'").fetchone()[0] == 0
+        body = example("request")
+        body["settings"].update(duration_s=1, sample_interval_s=1)
+        response = client.post("/api/simulations", json=body)
+        assert response.status_code == 202
+        accepted = response.json()
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            status = client.get(accepted["status_url"]).json()
+            if status["state"] in ("succeeded", "failed"):
+                break
+            time.sleep(0.05)
+        assert status["state"] == "succeeded", status
+        result = status["result"]
+        fields = client.get(result["fields"]["url"])
+        assert fields.status_code == 200
+        with np.load(io.BytesIO(fields.content), allow_pickle=False) as arrays:
+            assert list(arrays["concentration"].shape) == result["fields"]["shape"]
+            assert arrays["active_domain_mask"].dtype == np.bool_
+            assert arrays["concentration"][-1].sum() > 0
         invalid = example("request")
         invalid["placements"][0]["definition_id"] = "missing"
         assert client.post("/api/simulations", json=invalid).status_code == 422
-        for suffix in ("", "/fields"):
-            assert client.get(f"/api/simulations/unknown{suffix}").status_code == 404
+        unknown = client.get("/api/simulations/unknown/fields")
+        assert unknown.status_code == 404
+        assert unknown.json()["detail"]["code"] == "result_not_found"
+        assert client.get("/api/simulations/unknown").status_code == 404
         schema = client.get("/openapi.json").json()
         assert schema["paths"]["/api/simulations"]["post"]["responses"]["202"]
         assert "SimulationResult" in schema["components"]["schemas"]
         assert "/api/simulations/{job_id}/mask" not in schema["paths"]
+
+
+def test_preparation_failure_is_reported_as_job_error(tmp_path):
+    with TestClient(create_app(Settings(data_dir=tmp_path))) as client:
+        body = example("request")
+        for placement in body["placements"]:
+            placement["enabled"] = False
+        accepted = client.post("/api/simulations", json=body)
+        assert accepted.status_code == 202
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            status = client.get(accepted.json()["status_url"]).json()
+            if status["state"] in ("succeeded", "failed"):
+                break
+            time.sleep(0.05)
+        assert status["state"] == "failed"
+        assert status["error"]["code"] == "no_sources"
+        assert client.get(accepted.json()["status_url"] + "/fields").status_code == 404

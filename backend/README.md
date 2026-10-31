@@ -271,15 +271,20 @@ Provider exceptions are logged server-side; jobs expose a generic
 `recognition_failed` error without paths or exception details. Invalid request
 fields use the same error envelope, including FastAPI validation failures.
 
-## Simulation contract (execution pending)
+## Simulation API
 
-Routes and typed request/response schemas are exposed in Swagger now:
+Routes and typed request/response schemas are exposed in Swagger:
 
-| Route | Contract | Current behavior |
-| --- | --- | --- |
-| `POST /api/simulations` | One metric configuration; future `202` with `job_id`, `client_request_id`, `status_url` | Validates then returns `503 simulation_unavailable`; creates no job |
-| `GET /api/simulations/{job_id}` | Status, request correlation, timestamps, result or error | `404 job_not_found`; no simulation jobs exist yet |
-| `GET /api/simulations/{job_id}/fields` | One download bundling concentration and active-domain mask | `404 result_not_found` |
+| Route | Behavior |
+| --- | --- |
+| `POST /api/simulations` | Queues a configuration and returns `202` with `job_id`, `client_request_id`, and `status_url`; returns `429` if the shared queue is full. |
+| `GET /api/simulations/{job_id}` | Returns queued, running, succeeded, or failed status with result metadata or an error. |
+| `GET /api/simulations/{job_id}/fields` | Downloads the completed field bundle; returns `404` before completion or after expiry. |
+
+Jobs run in an isolated process with a 120-second hard deadline. Preparation and
+solver failures are reported in the failed job status. Jobs share the bounded queue
+with recognition and are interrupted on backend restart. Results and submitted
+snapshots are retained for the configured retention period and then cleaned up.
 
 Request models live in `simulations/models.py` and `simulations/schemas.py`.
 See the [example request](tests/fixtures/simulations/request.json) and
@@ -293,8 +298,7 @@ pixel geometry, calibration, other scenarios, or entire project document.
 Every placement has a stable `placement_id` and `definition_id`; definitions contain
 raw capacity/units/lifetime/operating-hour inputs and provenance. Missing product
 information is allowed and standalone preparation resolves fallback relative rates.
-Optional `density_g_per_ml` supports volume conversion. The HTTP endpoint still
-does not execute preparation/simulation. Product fields use API snake_case names;
+Optional `density_g_per_ml` supports volume conversion. Product fields use API snake_case names;
 the FE's saved input format need not match them.
 
 The initial footprint representation is an `indoor_domain` polygon `boundary` with
@@ -307,9 +311,8 @@ implementation and the UI interaction remain follow-up work.
 Walls have IDs and metric `start`
 and `end`; doors/windows additionally reference a `wall_id`. Placement positions
 are explicitly `position_m`. The preparation library now checks polygon validity,
-wall/opening topology, source containment, and resource limits. It is not wired to
-the HTTP placeholder yet; API type/reference checks alone do not establish that a
-configuration is runnable.
+wall/opening topology, source containment, and resource limits during job execution.
+A request accepted into the queue can therefore still fail preparation.
 
 Settings require positive `duration_s` and exactly one of `sample_interval_s` or
 strictly increasing `sample_times_s` within the duration. Omitted grid size resolves
@@ -341,15 +344,13 @@ Polling metadata never embeds the large numerical arrays. After success, FE fetc
 `fields.url` once: the bundle contains `concentration` and `active_domain_mask`
 arrays. There is no separate mask endpoint or download. FE then performs playback
 and channel highlighting locally.
-Artifact encoding is intentionally not selected yet; the download routes document
-a generic binary response until an engine format is chosen. Aggregates by definition
+The bundle is a compressed NumPy NPZ archive: `concentration` is float32 and
+`active_domain_mask` is boolean. Both are standard NPY arrays and do not require pickle. Aggregates by definition
 or all placements can be derived under shared relative-unit assumptions instead of
 duplicating arrays. Correlate responses using `client_request_id` and retain the
 submitted snapshot to determine staleness; `input_fingerprint` identifies resolved
 backend input, not the current editor state.
 
-The placeholder endpoints do not execute, store snapshots, create queued work, or
-serve fake fields. No simulation DB schema/worker is installed in this change.
 
 ## Simulation preparation and numerical engine
 
@@ -429,8 +430,8 @@ Duration/resolution/output checks precede source resolution and grid allocation.
 memory budget. Preparation checks an array working-set estimate before building
 the grid; the solver adds sparse-factorization working-set estimates and checks
 deadlines between numerical operations. Invalid, non-finite, negative, or over-budget memory
-estimates are rejected. These are guards, not an OS memory cap or hard process
-timeout. Hard worker timeout enforcement remains part of job integration.
+estimates are rejected. These guards are not an OS memory cap. The simulation job
+worker also enforces a process-level deadline, including preparation and serialization.
 
 Provisional physical parameters in `simulations/limits.py`:
 
@@ -447,9 +448,8 @@ width multiplier. Window size alone cannot determine ventilation: pressure, wind
 and thermal driving forces also matter ([NIST CONTAM documentation](https://www.nist.gov/publications/contam-user-guide-and-program-documentation-version-34)).
 
 `EngineOutput` returns `[T,P,H,W]` fields, channel identities, numerical diagnostics,
-and an internal compact `final_state`. Job execution, artifact encoding, and endpoint
-activation remain separate work. Simulation endpoints still return their documented
-unavailable/not-found responses.
+and an internal compact `final_state`. The simulation job worker publishes the
+sampled fields and metadata through the HTTP endpoints.
 
 ### Cell balance and solver (implemented)
 
@@ -499,8 +499,8 @@ prepared input fingerprint.
 
 Memory guards reserve room for arrays and estimated sparse LU fill before solving,
 then check actual factor storage. Native library allocation/work cannot be forcibly
-interrupted inside this synchronous function; process-level timeout and memory
-isolation remain necessary when wiring job execution. This is not a hard RSS cap.
+interrupted inside this synchronous function. The API runs it in a separate process
+with a deadline, but does not enforce a hard RSS cap.
 
 Tests cover conservation, source accumulation, decay, walls/doors/holes, per-placement
 superposition and residuals, spatial/time refinement, and independence from snapshot
@@ -644,9 +644,8 @@ Do not use an expiring job ID as the sole definition of a continuation state.
 
 ## Jobs, expiry, and restart behavior
 
-Currently only recognition jobs are submitted. Uploads and image retrieval are
-not jobs. Simulation can reuse lifecycle infrastructure later; its HTTP contracts
-are placeholders and no execution is implemented. Advice has no endpoint yet.
+Recognition and simulation jobs share the queue. Uploads and image retrieval are
+not jobs. Advice has no endpoint yet.
 
 SQLite stores upload metadata and job kind/state, input image reference,
 creation/update/expiry timestamps, result reference, and error details. It never
@@ -654,9 +653,11 @@ stores user projects or image bytes. Database transactions finish before computa
 
 The queue is bounded and in memory, not a durable broker. Shutdown/startup marks
 unfinished jobs `failed` with `job_interrupted`; there are no automatic retries or
-resumption. Graceful shutdown waits for an executing child process to finish, but
-may discard its result and mark the job interrupted. A provider that hangs requires
-operator intervention; hard execution timeouts are not implemented yet.
+resumption. On shutdown, an executing simulation child is terminated, with a forced
+kill if it does not exit during the grace period. Simulations have a 120-second hard
+deadline, followed by a short termination grace period. Recognition runs in a separate
+process pool and has no hard timeout; a hung recognition provider may require operator
+intervention and can delay graceful shutdown.
 
 Uploads expire 24 hours after creation by default. Jobs receive a fresh retention
 window at completion. Active jobs remain pollable past their provisional expiry;
@@ -780,9 +781,8 @@ The endpoint still returns `calibration: null`; actual calibration is frontend-o
    implementation using predefined layouts and convergence/physical-balance checks.
 3. **Preparation refinement:** benchmark the implemented consumption resolver,
    provisional defaults, resource guards, and initial-state boundary alongside the
-   prototype; agree with FE on artifact encoding.
-4. **Simulation delivery:** connect the placeholder routes to queued execution, sampled-field artifacts, result
-   retrieval, and correlation with submitted configurations.
+   prototype; integrate NPZ playback in the frontend.
+4. **Simulation delivery:** integrate queued execution and sampled-field playback into the frontend.
 5. **Advice and reliability:** add on-demand interpretation, execution limits,
    recovery improvements, and representative end-to-end checks.
 
@@ -824,7 +824,7 @@ flowchart TD
     Prepared --> Browser["Browser: retain image and editable configuration"]
     Recognition --> Browser
     Browser <-->|"Browser-owned"| Save["JSON export / import"]
-    Browser --> Simulation["Future: submit one simulation configuration"]
+    Browser --> Simulation["Submit one simulation configuration"]
     Simulation --> Metric["Validate and resolve metric SimulationInput"]
     Metric --> Engine["Grid and 2D solver"]
     Engine --> Result["Sampled fields and metadata"]
@@ -837,13 +837,12 @@ bytes and inactive scenarios. Preparation validates references, resolves omitted
 opening states to closed, and records explicit assumptions in a detached input.
 Open doors connect spaces; windows are recognized now but open-window physical
 behavior is still undecided. Metric/grid preparation is implemented independently;
-the solver and HTTP execution path remain pending.
+the solver and HTTP execution path are implemented.
 
 The HTTP contract now describes grid alignment, channel/time/array ordering,
-relative units, and request correlation; actual field encoding and queued delivery
-remain follow-up work. Advice accepts explicit configuration
+relative units, request correlation, NPZ encoding, and queued delivery. Advice accepts explicit configuration
 context, not the browser's project document.
 
 Results will represent approximate relative concentrations under stated assumptions,
-not accurate real airflow or perceived scent intensity. Test the future engine
+not accurate real airflow or perceived scent intensity. Test the engine
 independently of recognition using predefined layouts under `tests/fixtures/layouts/`.
