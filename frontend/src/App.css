@@ -1,87 +1,80 @@
 .app {
-  display: grid;
-  grid-template-columns: 400px 1fr;
-  height: 100%;
-}
-
-.panel {
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
-  background: var(--surface);
-  border-right: 1px solid var(--border);
+  min-height: 100%;
 }
 
-.panel__header {
-  padding: 16px 20px 12px;
+.topbar {
+  display: flex;
+  align-items: baseline;
+  gap: 24px;
+  padding: 14px 24px;
   border-bottom: 1px solid var(--border);
+  background: var(--surface);
 }
 
-.panel__header h1 {
+.topbar h1 {
   margin: 0;
   font-size: 20px;
 }
 
 .steps {
   display: flex;
-  gap: 14px;
-  margin: 6px 0 0;
+  gap: 16px;
+  margin: 0;
   padding: 0;
   list-style: none;
   color: var(--text-muted);
   font-size: 13px;
 }
 
+.steps li {
+  padding-bottom: 2px;
+  border-bottom: 2px solid transparent;
+}
+
 .steps li.is-current {
-  color: var(--accent);
+  color: var(--text);
   font-weight: 600;
+  border-bottom-color: var(--accent);
 }
 
 .steps li.is-done {
   color: var(--text);
 }
 
-.panel__footer {
+.content {
+  flex: 1;
+  padding: 32px 16px;
+}
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.page--narrow {
+  max-width: 520px;
+}
+
+.page h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.page__footer {
   position: sticky;
   bottom: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  margin-top: auto;
-  padding: 12px 20px;
+  padding: 12px 0;
   border-top: 1px solid var(--border);
-  background: var(--surface);
-}
-
-.section {
-  padding: 14px 20px;
-  border-bottom: 1px solid var(--border);
-}
-
-.section h2 {
-  margin: 0 0 10px;
-  font-size: 14px;
-}
-
-.section__body {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 10px;
-}
-
-.file-button {
-  display: inline-block;
-  padding: 6px 12px;
-  border-radius: 6px;
-  background: var(--accent);
-  color: #fff;
-  cursor: pointer;
-}
-
-.file-button input {
-  display: none;
+  background: var(--bg);
 }
 
 .note {
@@ -95,6 +88,66 @@
   border-radius: 6px;
   background: var(--error-soft);
   color: var(--error);
+}
+
+.dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 48px 16px;
+  border: 2px dashed var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.dropzone:hover,
+.dropzone--over {
+  border-color: var(--accent);
+  background: var(--surface-sunken);
+}
+
+.dropzone input {
+  display: none;
+}
+
+.dropzone__button {
+  padding: 8px 16px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.plan-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.plan-summary img {
+  width: 72px;
+  height: 52px;
+  object-fit: contain;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #fff;
+}
+
+.plan-summary > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.plan-summary p {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .row {
@@ -125,6 +178,7 @@
   border: 1px solid var(--border);
   border-radius: 8px;
   min-width: 0;
+  background: var(--surface);
 }
 
 .card__name {
@@ -163,7 +217,7 @@
 .choices button.is-selected {
   border-color: var(--accent);
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .number-input {
@@ -180,12 +234,7 @@
   width: 100%;
 }
 
-.stage {
-  position: relative;
-  min-width: 0;
-  background: var(--stage);
-}
-
+/* PlanViewer: not mounted yet, kept for the upcoming workspace page. */
 .viewer {
   position: absolute;
   inset: 0;
@@ -223,20 +272,4 @@
   position: absolute;
   top: 12px;
   right: 12px;
-}
-
-@media (max-width: 760px) {
-  .app {
-    grid-template-columns: 1fr;
-    grid-template-rows: 60vh auto;
-  }
-
-  .stage {
-    grid-row: 1;
-  }
-
-  .panel {
-    border-right: none;
-    border-top: 1px solid var(--border);
-  }
 }
