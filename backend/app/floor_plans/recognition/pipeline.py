@@ -54,7 +54,7 @@ def recognize(image_path: Path) -> RecognitionDraft:
     if thickness is not None:
         segments = detect_walls(mask, thickness)
         segments, openings = find_openings(
-            segments, line_mask(image), detail_mask(image), thickness
+            segments, line_mask(image), detail_mask(image), thickness, mask
         )
         kept = drop_small_groups(segments)
         if len(kept) < len(segments):

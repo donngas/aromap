@@ -62,6 +62,41 @@ def test_gap_to_wall_with_swing_arc_is_bridged() -> None:
     assert WallSegment("horizontal", 100, 0, 260) in walls
 
 
+def test_door_hinged_on_short_stub_leaves_stub_as_wall() -> None:
+    # A stockroom wall stops 80 px short of the wall at x=280. The door hinges on
+    # a 20 px stub (too short to detect) at x=260 and swings back to x=200.
+    segments = [
+        WallSegment("horizontal", 100, 0, 200),
+        WallSegment("vertical", 0, 0, 300),
+        WallSegment("vertical", 280, 0, 300),
+    ]
+    details = _swing(_blank(), (260, 100), 60, 180, 270)
+    stub = cv2.rectangle(_blank(), (260, 95), (280, 105), 255, cv2.FILLED)
+
+    walls, openings = find_openings(segments, _blank(), details, 10, wall_pixels=stub)
+
+    assert [(o.kind, o.span) for o in openings] == [
+        ("door", WallSegment("horizontal", 100, 200, 260))
+    ]
+    assert WallSegment("horizontal", 100, 0, 280) in walls
+
+
+def test_door_without_stub_fills_gap() -> None:
+    # Same swing, but nothing is drawn beside the hinge: the door fills the gap.
+    segments = [
+        WallSegment("horizontal", 100, 0, 200),
+        WallSegment("vertical", 0, 0, 300),
+        WallSegment("vertical", 280, 0, 300),
+    ]
+    details = _swing(_blank(), (260, 100), 60, 180, 270)
+
+    _, openings = find_openings(segments, _blank(), details, 10, wall_pixels=_blank())
+
+    assert [(o.kind, o.span) for o in openings] == [
+        ("door", WallSegment("horizontal", 100, 200, 280))
+    ]
+
+
 def test_wall_ending_in_open_room_is_not_bridged() -> None:
     segments = [
         WallSegment("horizontal", 100, 0, 200),

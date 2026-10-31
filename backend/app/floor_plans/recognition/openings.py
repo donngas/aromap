@@ -26,6 +26,9 @@ MAX_OPENING_IMAGE_RATIO = 0.25
 # of the gap (single door) or the middle of it (double door). The hinge may sit
 # up to this fraction of the gap inside its end, e.g. on a short wall stub.
 MAX_HINGE_INSET_RATIO = 0.3
+# Such a stub stays wall when wall pixels cover at least this fraction of its
+# length; otherwise the arc is just drawn slightly off and the door fills the gap.
+STUB_COVERAGE = 0.8
 # The arc is found when this fraction of points sampled along it are strokes...
 ARC_COVERAGE = 0.7
 # ...while smaller rings inside it, where the door swings, are at most this
@@ -57,7 +60,11 @@ class Opening:
 
 
 def find_openings(
-    segments: list[WallSegment], lines: np.ndarray, details: np.ndarray, thickness: int
+    segments: list[WallSegment],
+    lines: np.ndarray,
+    details: np.ndarray,
+    thickness: int,
+    wall_pixels: np.ndarray | None = None,
 ) -> tuple[list[WallSegment], list[Opening]]:
     """Bridge door/window-sized gaps and return the bridged walls with openings.
 
@@ -67,9 +74,10 @@ def find_openings(
     bridged. Isolated segments are bridged only when both ends reach walls, so
     stray equipment or fixture drawings stay detached and can be dropped later.
     ``lines`` (dark lines of any shade) reveals glazing; ``details`` (strokes in
-    any color) reveals door arcs.
+    any color) reveals door arcs. ``wall_pixels`` (the wall mask), when given,
+    keeps short wall stubs beside door hinges out of the doors.
     """
-    symbols = _Symbols(lines, details, thickness)
+    symbols = _Symbols(lines, details, thickness, wall_pixels)
     min_gap = MIN_OPENING_RATIO * thickness
     plain_gap = MAX_OPENING_RATIO * thickness
     max_gap = max(plain_gap, MAX_OPENING_IMAGE_RATIO * max(lines.shape))
@@ -81,18 +89,29 @@ def find_openings(
 class _Symbols:
     """Classifies gaps by the door or window symbol drawn in them."""
 
-    def __init__(self, lines: np.ndarray, details: np.ndarray, thickness: int) -> None:
+    def __init__(
+        self,
+        lines: np.ndarray,
+        details: np.ndarray,
+        thickness: int,
+        wall_pixels: np.ndarray | None,
+    ) -> None:
         self.lines = lines
         # Slightly thickened strokes tolerate arcs drawn a pixel off their path.
         self.strokes = cv2.dilate(details, np.ones((3, 3), np.uint8))
         self.thickness = thickness
+        self.wall_pixels = wall_pixels
 
-    def find(self, gap: WallSegment) -> OpeningKind | None:
-        """Door for a swing arc, window for glazing lines, None for no symbol."""
-        if _has_swing_arc(self.strokes, gap):
-            return "door"
+    def find(self, gap: WallSegment) -> Opening | None:
+        """Door for a swing arc, window for glazing lines, None for no symbol.
+
+        A door covers only its swing, so a short wall stub beside the hinge stays wall.
+        """
+        door = _find_swing(self.strokes, self.wall_pixels, gap, self.thickness)
+        if door is not None:
+            return Opening("door", door)
         if _has_glazing(self.lines, gap, self.thickness):
-            return "window"
+            return Opening("window", gap)
         return None
 
 
@@ -114,11 +133,11 @@ def _bridge_collinear_gaps(
         for segment in line[1:]:
             width = segment.start - current.end
             gap = replace(current, start=current.end, end=segment.start)
-            kind = symbols.find(gap) if min_gap <= width <= max_gap else None
-            if kind is None and min_gap <= width <= plain_gap:
-                kind = "door"  # A plain gap between aligned walls is a doorway.
-            if kind is not None:
-                openings.append(Opening(kind, gap))
+            opening = symbols.find(gap) if min_gap <= width <= max_gap else None
+            if opening is None and min_gap <= width <= plain_gap:
+                opening = Opening("door", gap)  # A plain gap between aligned walls is a doorway.
+            if opening is not None:
+                openings.append(opening)
                 current = replace(current, end=segment.end)
             else:
                 walls.append(current)
@@ -147,10 +166,10 @@ def _bridge_gaps_to_walls(
             gap = replace(segment, start=min(value, target), end=max(value, target))
             if any(_overlaps(gap, other) for other in collinear):
                 continue
-            kind = symbols.find(gap)
-            if kind is None:
+            opening = symbols.find(gap)
+            if opening is None:
                 continue
-            segment_openings.append(Opening(kind, gap))
+            segment_openings.append(opening)
             bridged = replace(bridged, **{side: target})
         # An isolated piece is a wall between two openings only if both ends reach
         # walls; bridging just one end would attach stray drawings such as equipment.
@@ -189,18 +208,54 @@ def _overlaps(gap: WallSegment, other: WallSegment) -> bool:
     )
 
 
-def _has_swing_arc(strokes: np.ndarray, gap: WallSegment) -> bool:
+def _find_swing(
+    strokes: np.ndarray, wall_pixels: np.ndarray | None, gap: WallSegment, thickness: int
+) -> WallSegment | None:
+    """The part of the gap a door swings across, or None without a swing arc.
+
+    The hinge may sit inside the gap, both on a short wall stub and where the
+    arc is drawn slightly off the wall end. Only a stub that ``wall_pixels``
+    shows as wall is kept out of the door; otherwise the door fills the gap, as
+    does a double door. On equal scores the hinge closest to the gap end wins.
+    """
     width = gap.end - gap.start
-    single = max(
-        _arc_score(strokes, gap, end + direction * inset, direction, width - inset)
-        for end, direction in ((gap.start, 1), (gap.end, -1))
-        for inset in np.linspace(0, MAX_HINGE_INSET_RATIO * width, 7)
-    )
+    best_score, best_stub = -1.0, None
+    for end, direction in ((gap.start, 1), (gap.end, -1)):
+        for inset in np.linspace(0, MAX_HINGE_INSET_RATIO * width, 7):
+            hinge = end + direction * inset
+            score = _arc_score(strokes, gap, hinge, direction, width - inset)
+            if score > best_score:
+                stub = replace(gap, start=min(end, hinge), end=max(end, hinge))
+                best_score, best_stub = score, stub if inset else None
     double = min(
         _arc_score(strokes, gap, gap.start, 1, width / 2),
         _arc_score(strokes, gap, gap.end, -1, width / 2),
     )
-    return max(single, double) >= ARC_COVERAGE
+    if double >= best_score:
+        best_score, best_stub = double, None
+    if best_score < ARC_COVERAGE:
+        return None
+    if best_stub is None or wall_pixels is None or not _is_wall(wall_pixels, best_stub, thickness):
+        return gap
+    if best_stub.start == gap.start:
+        return replace(gap, start=best_stub.end)
+    return replace(gap, end=best_stub.start)
+
+
+def _is_wall(wall_pixels: np.ndarray, stub: WallSegment, thickness: int) -> bool:
+    """Whether wall pixels run along nearly the whole stub."""
+    band = _wall_band(wall_pixels, stub, thickness)
+    return band.size > 0 and (band > 0).any(axis=0).mean() >= STUB_COVERAGE
+
+
+def _wall_band(lines: np.ndarray, segment: WallSegment, thickness: int) -> np.ndarray:
+    """Pixels within the wall's thickness along the segment, one column per step."""
+    half = thickness / 2 + 1
+    across = slice(max(0, round(segment.offset - half)), round(segment.offset + half) + 1)
+    along = slice(int(segment.start) + 1, int(segment.end))
+    if segment.orientation == "horizontal":
+        return lines[across, along]
+    return lines[along, across].T
 
 
 def _arc_score(
@@ -239,13 +294,7 @@ def _coverage(
 def _has_glazing(lines: np.ndarray, gap: WallSegment, thickness: int) -> bool:
     # Glazing lies within the wall's own thickness; looking further would pick up
     # edges of the floor colors on either side.
-    half = thickness / 2 + 1
-    across = slice(max(0, round(gap.offset - half)), round(gap.offset + half) + 1)
-    along = slice(int(gap.start) + 1, int(gap.end))
-    if gap.orientation == "horizontal":
-        band = lines[across, along]
-    else:
-        band = lines[along, across].T
+    band = _wall_band(lines, gap, thickness)
     if band.size == 0:
         return False
     covered = (band > 0).mean(axis=1) >= GLAZING_LINE_COVERAGE
