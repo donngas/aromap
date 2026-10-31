@@ -1,86 +1,101 @@
 # Aromap
 
-Interactive indoor scent diffusion simulator for the **Sensation** hackathon theme.
-Planned stack: React frontend and FastAPI backend, with approximate relative concentration simulations.
+Indoor scent diffusion simulator for the **Sensation** hackathon. The React frontend
+owns editable projects; the FastAPI backend prepares and recognizes floor plans and
+runs approximate relative-concentration simulations. See [backend/README.md](backend/README.md)
+for API contracts, supported recognition inputs, simulation assumptions, and limits.
 
-- `frontend/` — frontend project root (npm).
-- `backend/` — backend project root (Python, managed with uv).
-- `compose.yaml` — local development with source reload.
-- `compose.staging.yaml` — production-style build/commands for staging tests.
+## Local development
 
-The backend provides image uploads and recognition job infrastructure. See
-[backend/README.md](backend/README.md) for setup, API contracts, and current scope.
-
-Requires Docker Compose 2.24.4+ (staging uses `!override` / `!reset`).
-Optionally copy `.env.example` to `.env` at the root to override defaults. No
-credentials are required. Both **host** ports are configurable via `FRONTEND_PORT`
-and `BACKEND_PORT`; `HOST_BIND` defaults to `127.0.0.1` (local-only).
-
-Local development:
+Requires Docker Compose 2.24.4 or newer. Defaults work without credentials or a
+`.env` file; copy [.env.example](.env.example) to `.env` to override them.
 
 ```sh
 docker compose up --build
 ```
 
-Frontend: http://localhost:5173 · Backend: http://localhost:8000
+- Frontend: http://localhost:5173
+- Backend: http://localhost:8000; API docs: http://localhost:8000/docs
+- Backend readiness: http://localhost:8000/health
 
-Swagger: http://localhost:8000/docs · Readiness: http://localhost:8000/health
-
-Only frontend `src/` and `public/` and backend `app/` are hot-mounted. Rebuild for
-dependency/configuration changes. Container dependencies are not hidden by source
-mounts. Backend tests are also mounted in local development:
+The development stack mounts frontend source and backend `app/`, `tests/` and `scripts/` for
+reload and testing. Rebuild after changing dependencies or configuration:
 
 ```sh
 docker compose run --rm --no-deps backend uv run --locked pytest -q
 ```
 
-Staging uses built frontend assets served on container port 80 and a single backend
-process without reload or dev dependencies. No source directories are mounted:
+## Staging
+
+Staging builds the production targets: Nginx serves the frontend and one backend
+process runs without reload or development dependencies. It uses a separate volume
+when launched with the project name below:
 
 ```sh
 docker compose -p aromap-staging -f compose.yaml -f compose.staging.yaml up --build
 ```
 
-Both host ports remain configurable and the backend remains directly accessible.
-Use different ports to run local and staging simultaneously, for example:
+Use the same project name and files for `logs` and `down`. `down` preserves stored
+uploads and results; `down -v` deletes the staging volume. To run staging beside
+development, set different host ports, for example `FRONTEND_PORT=5174 BACKEND_PORT=8001`.
+The host ports default to 5173 and 8000; `HOST_BIND` defaults to `127.0.0.1`.
 
-```sh
-FRONTEND_PORT=5174 BACKEND_PORT=8001 docker compose -p aromap-staging \
-  -f compose.yaml -f compose.staging.yaml up --build
-```
+The frontend proxies relative `/api/...` requests to `API_PROXY_TARGET`, defaulting
+to `http://backend:8000` inside Compose. Use an origin without a path or trailing
+slash. When Vite runs outside Docker, set this to the published backend address.
+Nginx resolves the backend through Docker DNS and reads proxy settings at container
+startup; recreate the frontend after changing them. The browser needs no backend URL.
 
-The explicit staging project name isolates its data volume from local development.
-Use the same `-p` and `-f` arguments for staging `down`, `logs`, etc. Without `-v`,
-`down` retains SQLite/images/results; adding `-v` deletes that stack's volume.
-To run just the backend, append `backend` to the appropriate `up` command.
+`FRONTEND_MAX_BODY_SIZE` defaults to `12m`, allowing overhead above the backend's
+10 MiB image limit. If increasing `AROMAP_MAX_UPLOAD_BYTES`, increase the Nginx
+limit by at least 1 MiB as well. Same-origin proxy requests need no CORS setup;
+configure `AROMAP_CORS_ORIGINS` for direct browser requests from other origins.
+For LAN access, set `HOST_BIND=0.0.0.0` and configure those origins as needed.
 
-Frontend development runs Vite on container port 5173; staging builds `dist/`
-and serves it through Nginx on container port 80. Both forward relative `/api/...`
-requests to `API_PROXY_TARGET` (default `http://backend:8000`), preserving the full
-path and query string. Use an origin without a path or trailing slash. The browser
-needs no backend URL or build-time API configuration. Staging reads proxy settings
-at container startup; recreate the frontend container after changing them.
+## Manual CI and image publishing
 
-Nginx uses Docker DNS to resolve the backend again after container recreation.
-It provides SPA fallback, caches hashed `/assets/` files, and serves `index.html`
-with revalidation. API requests and missing build assets never use SPA fallback.
+In GitHub Actions, **Test staging stack** builds and starts the staging stack, runs
+the backend suite in a separate development container, and checks the frontend,
+backend health, upload and recognition through the frontend proxy. It collects logs
+on failure and removes its temporary stacks and volumes. The same smoke test can run
+against a local staging stack with `python3 scripts/smoke_staging.py`.
 
-For Vite running outside Docker, set `API_PROXY_TARGET` to the published backend
-address (for example `API_PROXY_TARGET=http://127.0.0.1:8000 npm run dev` inside
-`frontend/`). Vite also reads `frontend/.env`; the root `.env` is read by Compose.
-Changing `BACKEND_PORT` changes host access only; Docker proxies continue using
-`backend:8000`.
+**Build and publish images** builds `frontend`, `backend`, or `both` for
+`linux/amd64` and pushes production images to:
 
-Staging Nginx limits complete request bodies to `FRONTEND_MAX_BODY_SIZE` (default
-`12m`), allowing multipart overhead above the default 10 MiB backend image limit.
-If increasing `AROMAP_MAX_UPLOAD_BYTES`, increase the Nginx limit to at least that
-value plus 1 MiB. Vite has no corresponding body-size cap; the backend enforces its
-image limit in both modes.
+- `ghcr.io/<owner>/aromap-frontend:<commit-sha>`
+- `ghcr.io/<owner>/aromap-backend:<commit-sha>`
 
-Compose automatically allows localhost/127.0.0.1 frontend origins at `FRONTEND_PORT`
-unless `AROMAP_CORS_ORIGINS` is explicitly set. This is for direct cross-origin API
-calls; same-origin proxying does not require CORS. For LAN access, set
-`HOST_BIND=0.0.0.0` and configure actual browser origins. Swagger remains directly
-accessible on the published backend port independently of frontend routing.
+The full commit SHA identifies the selected revision. Builds from `main` also update
+`latest`; use SHA tags on the server and retain the previous tags for rollback. A
+single-service run publishes only that service; a `both` run builds both from the
+same revision. Manual workflows must exist on the default branch before GitHub can
+dispatch them. Publishing uses `GITHUB_TOKEN` with package write permission.
+SHA tags identify the source revision but can be overwritten by a rebuild; use an
+image digest when an exact, immutable artifact is required.
 
-An actual production Compose file and cloudflared wiring are intentionally deferred.
+BuildKit caches frontend and backend layers separately in GitHub Actions. The backend
+uses a uv cache mount to avoid embedding downloads in the image; cache mounts do not
+persist in the GitHub Actions layer cache by default. Later server pulls can reuse
+unchanged image layers.
+
+## Server deployment contract
+
+The server maintains its own Compose configuration and pulls the GHCR images; server
+routing and cloudflared configuration are outside this repository. The frontend
+listens on container port 80 and defaults to `API_PROXY_TARGET=http://backend:8000`.
+The backend listens on port 8000 and needs `AROMAP_DATA_DIR=/data` on a persistent,
+writable volume. Run **one backend process and replica**: its bounded in-memory
+queue and SQLite registry are designed for a single instance. Jobs are interrupted
+on restart, and uploads and results expire after 24 hours by default.
+
+After pulling the chosen tags and starting the server stack, check `/health` and
+perform an upload and recognition through the public frontend. The CI smoke test
+cannot verify the server's routing or volume permissions. Check free disk before
+the event and monitor it during a load test.
+
+Start sizing with roughly 2 GiB of memory for the host/container workload, leaving
+room for the OS. This is a test target, not a guaranteed minimum: run representative
+recognition and simulation jobs and the [backend benchmarks](backend/README.md) on
+the actual host, then set the container limit from observed peak memory. The backend
+has resource estimates and deadlines, but does not enforce a hard RSS cap.
