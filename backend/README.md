@@ -62,11 +62,10 @@ recreation. Staging's separate project name gives it a separate volume. Running
 `down -v` with the corresponding Compose/project arguments deletes that volume. API documentation and
 schemas are at `/docs` and `/openapi.json`.
 
-Recognition is unavailable by default. After integrating a provider implementing
-the agreed callable, set `AROMAP_RECOGNITION_CALLABLE=module.path:function` and restart.
-For example, once the existing entry point delegates to a real implementation:
-`app.floor_plans.recognition.interface:recognize_floor_plan`. Do not enable the
-current unimplemented stub. No mock recognition is served by production endpoints.
+Recognition is unavailable by default. The entry point now delegates to an OpenCV
+implementation; enable it with
+`AROMAP_RECOGNITION_CALLABLE=app.floor_plans.recognition.interface:recognize_floor_plan`
+and restart. No mock recognition is served by production endpoints.
 
 ## Configuration
 
@@ -284,6 +283,29 @@ The authoritative callable and error contract remain in
 ```python
 recognize_floor_plan(image_path: Path) -> RecognitionDraft
 ```
+
+It delegates to the OpenCV pipeline in
+[`pipeline.py`](app/floor_plans/recognition/pipeline.py), which detects axis-aligned
+walls (solid or hollow line-drawn) and identifies doors and windows from wall gaps,
+swing arcs, and glazing lines. Other providers should live in sibling modules
+behind the same entry point.
+
+### Supported input images
+
+Recognition targets **clean digital floor plans**. Show this guidance at upload;
+other images still return a draft, but expect to correct or trace it manually.
+
+| Supported | Not supported (unreliable) |
+| --- | --- |
+| Computer-drawn or exported plan, top-down | Photos, scans, hand or pencil drawings |
+| Walls clearly thicker than other lines (solid black/gray, or two lines with a gap) | Walls as thin as shelves, furniture, or text |
+| Horizontal and vertical walls | Diagonal or curved walls |
+| Light background; plain floor colors are fine | Landscaping, 3D renders, heavy decoration or hatching |
+| Doors as gaps with a swing arc; windows as gaps with 2+ thin parallel lines | Busy CAD sheets with many dimensions and title blocks |
+| Roughly 500–2000 px, with the plan filling most of the image | Angled photos (perspective distortion) |
+
+When a plan looks unsupported (much of its wall-like content is detached
+clutter), the draft includes a warning that results may be unreliable.
 
 - Caller supplies an absolute path to a prepared image, retains it throughout the
   call, and owns storage/cleanup. Recognition must not modify/delete the original.
