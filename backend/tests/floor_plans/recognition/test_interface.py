@@ -135,7 +135,7 @@ def cafe(drafts) -> Layout:
         ((309, 875), (443, 875)),  # double entrance door
         ((422, 224), (422, 282)),  # kitchen passage
         ((188, 196), (251, 196)),  # left restroom door
-        ((347, 196), (400, 196)),  # right restroom door, hinged on a short stub
+        ((347, 196), (404, 196)),  # right restroom door, hinged on a short stub
     ],
 )
 def test_cafe_doors(cafe: Layout, start, end) -> None:

@@ -14,6 +14,10 @@ Orientation = Literal["horizontal", "vertical"]
 
 # Shortest detectable wall, as a multiple of the wall thickness.
 MIN_LENGTH_RATIO = 3
+# Shorter pieces down to this multiple are kept only when they meet a longer
+# perpendicular wall: corner returns beside windows and jambs beside doors.
+# Free-standing short blocks (display stands, counters) are still ignored.
+MIN_STUB_LENGTH_RATIO = 1
 # Components thicker than this multiple of the wall thickness are filled
 # regions (e.g. solid counters or shelving), not walls.
 MAX_THICKNESS_RATIO = 2
@@ -53,13 +57,48 @@ class WallSegment:
 
 def detect_walls(mask: np.ndarray, thickness: int) -> list[WallSegment]:
     """Find horizontal and vertical wall centerlines in a wall mask."""
-    length = (MIN_LENGTH_RATIO * thickness) | 1  # Odd keeps the kernel centered.
-    segments = [
+    walls = _merge_collinear(
+        _segments(mask, MIN_LENGTH_RATIO * thickness, thickness), tolerance=thickness
+    )
+    # Just longer than the thickness, so a wall's usual width never reads as a stub.
+    stub_length = MIN_STUB_LENGTH_RATIO * thickness + 1
+    stubs = [
+        stub
+        for stub in _segments(mask, stub_length, thickness)
+        if _meets_perpendicular(stub, walls, thickness) and not _is_covered(stub, walls, thickness)
+    ]
+    segments = _merge_collinear(walls + stubs, tolerance=thickness)
+    return _snap_endpoints(segments, tolerance=thickness)
+
+
+def _segments(mask: np.ndarray, length: int, thickness: int) -> list[WallSegment]:
+    length |= 1  # Odd keeps the kernel centered.
+    return [
         *_directional_segments(mask, "horizontal", length, thickness),
         *_directional_segments(mask, "vertical", length, thickness),
     ]
-    segments = _merge_collinear(segments, tolerance=thickness)
-    return _snap_endpoints(segments, tolerance=thickness)
+
+
+def _meets_perpendicular(
+    stub: WallSegment, walls: list[WallSegment], tolerance: float
+) -> bool:
+    return any(
+        wall.orientation != stub.orientation
+        and wall.start - tolerance <= stub.offset <= wall.end + tolerance
+        and stub.start - tolerance <= wall.offset <= stub.end + tolerance
+        for wall in walls
+    )
+
+
+def _is_covered(stub: WallSegment, walls: list[WallSegment], tolerance: float) -> bool:
+    """Whether a longer collinear wall already spans the stub."""
+    return any(
+        wall.orientation == stub.orientation
+        and abs(wall.offset - stub.offset) <= tolerance / 2
+        and wall.start - tolerance <= stub.start
+        and stub.end <= wall.end + tolerance
+        for wall in walls
+    )
 
 
 def _directional_segments(

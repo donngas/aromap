@@ -54,3 +54,20 @@ def test_doorway_gap_is_kept(shop_plan: np.ndarray) -> None:
     interior = [s for s in _detect(shop_plan) if s.orientation == "vertical" and abs(s.offset - 300) <= 1]
 
     assert len(interior) == 2
+
+
+def test_short_corner_return_is_kept_but_free_block_is_not() -> None:
+    # A storefront wall at x=50 (10 px thick) with a 20 px corner return beside
+    # a window, and a free-standing 20 px block (e.g. a display stand).
+    mask = np.zeros((300, 300), dtype=np.uint8)
+    mask[20:280, 45:55] = 255  # wall
+    mask[255:265, 55:75] = 255  # corner return
+    mask[100:110, 150:170] = 255  # display stand
+
+    segments = detect_walls(mask, thickness=10)
+
+    returns = [s for s in segments if s.orientation == "horizontal"]
+    assert len(returns) == 1 and abs(returns[0].offset - 259.5) <= TOLERANCE_PX
+    assert returns[0].end >= 70
+    assert all(s.offset != 104.5 for s in segments)
+
