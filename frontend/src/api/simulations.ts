@@ -64,8 +64,11 @@ export interface SimulationRequest {
   }[]
   opening_states: { opening_id: string; is_open: boolean }[]
   airflow: AirflowSettings
-  /** Sampling is left automatic; the backend keeps it within its sample limit. */
-  settings: { duration_s: number }
+  /**
+   * Sampling and grid are left automatic. Background ventilation
+   * (conditions.removal_rate_per_s) is not sent, so the backend default applies.
+   */
+  settings: { duration_s: number; mixing_preset: 'low' | 'medium' | 'high' }
 }
 
 export interface SimulationAccepted {
@@ -122,6 +125,7 @@ const MESSAGES: Record<string, string> = {
   ambiguous_exterior_opening: '열린 문이나 창이 바깥쪽인지 판단하기 어려워요. 그 문이나 창을 닫고 다시 시도해 주세요.',
   invalid_source: '디퓨저가 실내 밖이나 벽 위에 있어요. 위치를 조금 옮겨 주세요.',
   unresolved_source: '디퓨저가 벽에 너무 가까워요. 벽에서 조금 떨어뜨려 주세요.',
+  unresolved_airflow_device: '선풍기나 에어컨이 벽이나 실내 가장자리에 너무 붙어 있어요. 조금 안쪽으로 옮겨 주세요.',
   no_sources: '디퓨저를 하나 이상 놓아 주세요.',
   invalid_emission: '디퓨저 제품 정보로 향의 양을 계산할 수 없어요. 용량과 사용 기간을 확인해 주세요.',
   simulation_failed: '시뮬레이션을 계산하지 못했어요.',

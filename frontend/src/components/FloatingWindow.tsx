@@ -15,6 +15,8 @@ interface FloatingWindowProps {
   /** Highest the window may be dragged, e.g. to stay below a header. */
   minY?: number
   initialCollapsed?: boolean
+  /** Hides the window but keeps its place, fold and contents for when it returns. */
+  hidden?: boolean
   className?: string
   children: ReactNode
 }
@@ -32,6 +34,7 @@ export function FloatingWindow({
   width,
   minY = 0,
   initialCollapsed = false,
+  hidden = false,
   className = '',
   children,
 }: FloatingWindowProps) {
@@ -57,6 +60,7 @@ export function FloatingWindow({
         zIndex: z,
       }}
       aria-label={title}
+      hidden={hidden}
       onPointerDownCapture={bringToFront}
     >
       <header

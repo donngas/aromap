@@ -156,55 +156,108 @@
   font-weight: 600;
 }
 
-.ws-compare {
+/* A/B comparison rows in the analysis window */
+
+.ws-ab {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.ws-ab__badge {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.ws-ab__badge--a {
+  background: var(--forest-charcoal);
+}
+
+.ws-ab__badge--b {
+  background: #6f8fa8;
+}
+
+.ws-ab__pick {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
+  gap: 2px;
+  min-width: 0;
 }
 
-.ws-panel .ws-compare button {
-  position: relative;
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 0 8px;
+.ws-ab__pick select {
   width: 100%;
-  padding: 7px 10px 9px;
-  overflow: hidden;
-  text-align: left;
+  min-width: 0;
 }
 
-.ws-panel .ws-compare button.is-current {
-  border-color: var(--accent);
-}
-
-.ws-compare__name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-weight: 500;
-}
-
-.ws-compare__value {
-  grid-row: span 2;
-  align-self: center;
-  font-size: 16px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-
-.ws-compare__meta {
+.ws-ab__meta {
   color: var(--text-muted);
   font-size: 11px;
 }
 
-.ws-compare__bar {
+.ws-ab__value {
+  min-width: 46px;
+  font-size: 18px;
+  font-weight: 700;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Comparison: two read-only plans side by side */
+
+.ws-split {
   position: absolute;
-  left: 0;
-  bottom: 0;
-  height: 3px;
-  background: #e99eb8;
+  inset: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.ws-split__pane {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.ws-split__pane + .ws-split__pane {
+  border-left: 1px solid var(--border-strong);
+}
+
+.ws-split__label {
+  position: absolute;
+  top: calc(var(--topbar-h) + 14px);
+  left: 16px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 32px);
+  margin: 0;
+  padding: 6px 12px 6px 6px;
+  border: 1px solid rgba(178, 183, 173, 0.7);
+  border-radius: 10px;
+  background: rgba(242, 240, 238, 0.86);
+  box-shadow: 0 6px 18px rgba(31, 40, 30, 0.1);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  pointer-events: none;
+}
+
+.ws-split__name {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-split__value {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
 /* On/off switch (평면도 보이기) */

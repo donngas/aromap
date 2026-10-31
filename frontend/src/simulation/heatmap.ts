@@ -1,17 +1,16 @@
 // Draws one time step of the simulated field over the floor plan, one flat
-// colour per 25 cm grid cell. Colour never crosses a wall: the plan is split
+// colour per simulation grid cell. Colour never crosses a wall: the plan is split
 // into rooms by its closed walls (open doors and windows are gaps), and every
 // pixel takes the value of the nearest cell whose centre lies in the same room. This is
 // the backend's own rule: a cell belongs where its centre is, and cells only
 // exchange scent when the line between their centres crosses no wall.
 
-import { scentShade, type Rgb } from '../diffusers/scents.ts'
+import { spreadAlpha, spreadShade, type Rgb } from '../diffusers/scents.ts'
 import type { Layout, PixelPoint } from '../floorPlan/layout.ts'
 import type { SimulationField } from './run.ts'
 
 /** Strength of the log scale; concentrations fall off steeply from a source. */
 const LOG_K = 40
-const MAX_ALPHA = 0.72
 /** Longest side of the room raster, in pixels. */
 const RASTER_MAX = 1200
 
@@ -244,8 +243,8 @@ export function renderFrame(
     }
     const level = Math.log1p(LOG_K * total * scale) / Math.log1p(LOG_K)
     if (level <= 0.01) continue
-    const [sr, sg, sb] = scentShade([r / total, g / total, b / total], Math.min(1, level))
-    const a = Math.round(255 * MAX_ALPHA * Math.min(1, level * 1.4))
+    const [sr, sg, sb] = spreadShade([r / total, g / total, b / total], Math.min(1, level))
+    const a = Math.round(255 * spreadAlpha(Math.min(1, level)))
     colours[i] = ((a << 24) | (Math.round(sb) << 16) | (Math.round(sg) << 8) | Math.round(sr)) >>> 0
   }
 

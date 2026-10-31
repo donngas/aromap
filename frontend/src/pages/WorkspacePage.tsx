@@ -1,13 +1,20 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ApiError } from '../api/floorPlans.ts'
-import { AnalysisPanel, type ScenarioComparison } from '../components/AnalysisPanel.tsx'
+import { AnalysisPanel, type ComparableScenario } from '../components/AnalysisPanel.tsx'
 import { FloatingWindow } from '../components/FloatingWindow.tsx'
 import { PlaybackBar } from '../components/PlaybackBar.tsx'
-import { PlanViewer, type PlanDevice, type PlanGrid, type PlanMarker, type PlanOverlay } from '../components/PlanViewer.tsx'
+import {
+  PlanViewer,
+  type PlanDevice,
+  type PlanGrid,
+  type PlanMarker,
+  type PlanOverlay,
+  type PlanView,
+} from '../components/PlanViewer.tsx'
 import { DiffuserGlyph } from '../components/DiffuserGlyph.tsx'
 import { ScenarioList } from '../components/ScenarioList.tsx'
-import { hexToRgb, NO_SCENT_COLOR, scentColor, type Rgb } from '../diffusers/scents.ts'
-import { TYPE_INFO, type DiffuserType } from '../diffusers/types.ts'
+import { hexToRgb, NO_SCENT_COLOR, NO_SCENT_SPREAD, scentColor, spreadColor, type Rgb } from '../diffusers/scents.ts'
+import { TYPE_INFO } from '../diffusers/types.ts'
 import { metersPerPixel, pointInDomain } from '../floorPlan/geometry.ts'
 import type { Layout, PixelPoint } from '../floorPlan/layout.ts'
 import { defaultWallThickness } from '../floorPlan/layoutStyle.ts'
@@ -15,10 +22,12 @@ import type { PlanImage } from '../floorPlan/loadImage.ts'
 import {
   AIRFLOW_STRENGTHS,
   MAX_AIRFLOW_DEVICES,
+  MIXING_PRESETS,
   OUTDOOR_CONDITIONS,
   SIMULATION_HOURS,
   type AirflowDevice,
   type AirflowStrength,
+  type MixingPreset,
   type OutdoorConditions,
   type ProjectDocument,
   type Scenario,
@@ -26,7 +35,8 @@ import {
 import type { SaveStatus } from '../project/useAutosave.ts'
 import { coverageAt } from '../simulation/analysis.ts'
 import { buildCellMap, fieldMax, renderFrame } from '../simulation/heatmap.ts'
-import { buildSimulationRequest, estimateRunSeconds, MAX_PLACEMENTS, MAX_RUN_SECONDS } from '../simulation/request.ts'
+import { buildSimulationRequest, MAX_PLACEMENTS } from '../simulation/request.ts'
+import { BASE_CELL_M, estimateRunSeconds, MAX_RUN_SECONDS, scenarioCellSize } from '../simulation/resolution.ts'
 import { runSimulation, type RunPhase, type SimulationField } from '../simulation/run.ts'
 import './WorkspacePage.css'
 
@@ -49,9 +59,9 @@ interface ScenarioRun {
   openOpeningIds: ReadonlySet<string>
   indoor: { boundary: PixelPoint[]; holes: PixelPoint[][] }
   hours: number
-  /** Scent colour of each result channel, in channel order. */
+  /** Spread colour of each result channel, in channel order. */
   channelColors: Rgb[]
-  /** Scent families in the run, for the legend. */
+  /** Scent families in the run with their spread colours, for the legend. */
   scents: { label: string; color: string }[]
 }
 
@@ -76,6 +86,7 @@ function formatEstimate(seconds: number): string {
 }
 
 const OUTDOOR_LABELS: Record<OutdoorConditions, string> = { calm: '바람 없음', moderate: '약한 바람', breezy: '강한 바람' }
+const MIXING_LABELS: Record<MixingPreset, string> = { low: '하', medium: '중', high: '상' }
 
 /** Eight directions the wind can blow toward, in degrees clockwise from the plan's right. */
 const WIND_DIRECTIONS = [
@@ -250,15 +261,10 @@ export function WorkspacePage({ plan, project, layout, saveStatus, onChange }: W
       return openOpeningIds.has(openingId) ? { ...s, opening_states: others } : { ...s, opening_states: [...others, { opening_id: openingId, is_open: true }] }
     })
 
-  /** Type and scent colour of a placed product; a deleted product shows as a plain reed. */
-  const look = (definitionId: string): { type: DiffuserType; color: string } => {
-    const d = products.get(definitionId)
-    return d ? { type: d.type, color: scentColor(d.scentFamily) } : { type: 'reed', color: NO_SCENT_COLOR }
-  }
-
-  const markers = useMemo<PlanMarker[]>(
-    () =>
-      scenario.placements.map((p, i) => {
+  /** A scenario's diffusers as plan markers: type icon on a dot in the scent colour. */
+  const markersOf = useCallback(
+    (s: Scenario): PlanMarker[] =>
+      s.placements.map((p, i) => {
         const d = products.get(p.definition_id)
         return {
           id: p.id,
@@ -268,26 +274,23 @@ export function WorkspacePage({ plan, project, layout, saveStatus, onChange }: W
           color: d ? scentColor(d.scentFamily) : NO_SCENT_COLOR,
         }
       }),
-    [scenario.placements, products],
+    [products],
   )
-  const devices = useMemo<PlanDevice[]>(
-    () =>
-      scenario.airflow_devices.map((d) => ({ id: d.id, kind: d.type, position: d.position, direction: d.direction_degrees })),
-    [scenario.airflow_devices],
-  )
+  const markers = useMemo(() => markersOf(scenario), [markersOf, scenario])
+  const devices = useMemo(() => devicesOf(scenario), [scenario])
   /** "선풍기 1", "에어컨 2": devices numbered within their type. */
   const deviceLabels = useMemo(() => {
     const counts = { fan: 0, ac: 0 }
     return new Map(scenario.airflow_devices.map((d) => [d.id, `${DEVICE_LABELS[d.type]} ${++counts[d.type]}`]))
   }, [scenario.airflow_devices])
 
-  /** Distinct scents among the placed diffusers, in placing order. */
+  /** Distinct scents among the placed diffusers with their spread colours, in placing order. */
   const scentsOf = (placements: Scenario['placements']) => {
     const seen = new Map<string, string>()
     for (const p of placements) {
       const family = products.get(p.definition_id)?.scentFamily
       const label = family ?? '향 미선택'
-      if (!seen.has(label)) seen.set(label, scentColor(family ?? null))
+      if (!seen.has(label)) seen.set(label, spreadColor(family ?? null))
     }
     return [...seen].map(([label, color]) => ({ label, color }))
   }
@@ -308,7 +311,9 @@ export function WorkspacePage({ plan, project, layout, saveStatus, onChange }: W
     const { request, key } = build
     const mpp = metersPerPixel(project.calibration!.start, project.calibration!.end, project.calibration!.distance_m)!
     // Colours as placed now, so later edits don't recolour this result.
-    const colorOf = new Map(scenario.placements.map((p) => [p.id, hexToRgb(look(p.definition_id).color)]))
+    const colorOf = new Map(
+      scenario.placements.map((p) => [p.id, hexToRgb(spreadColor(products.get(p.definition_id)?.scentFamily ?? null))]),
+    )
     const snapshot = {
       openOpeningIds,
       indoor: { boundary: indoor!.boundary, holes: indoor!.holes },
@@ -322,7 +327,7 @@ export function WorkspacePage({ plan, project, layout, saveStatus, onChange }: W
     setJob({ scenarioId, phase: 'submitting' })
     runSimulation(request, (phase) => setJob({ scenarioId, phase }), controller.signal)
       .then((field) => {
-        const channelColors = field.placementIds.map((id) => colorOf.get(id) ?? hexToRgb(NO_SCENT_COLOR))
+        const channelColors = field.placementIds.map((id) => colorOf.get(id) ?? hexToRgb(NO_SCENT_SPREAD))
         setRuns((prev) => ({ ...prev, [scenarioId]: { field, key, mpp, channelColors, ...snapshot } }))
         setShowResult(true)
         setChannelPlacementId(null)
@@ -339,8 +344,18 @@ export function WorkspacePage({ plan, project, layout, saveStatus, onChange }: W
       })
   }
 
+  // A/B comparison: two finished scenarios side by side, read-only, sharing
+  // pan/zoom and playback. Null while editing.
+  const [compare, setCompare] = useState<{ a: string; b: string } | null>(null)
+  const [compareView, setCompareView] = useState<PlanView | null>(null)
+  const runA = compare ? (runs[compare.a] ?? null) : null
+  const runB = compare ? (runs[compare.b] ?? null) : null
+  const comparing = compare !== null && runA !== null && runB !== null
+  // The longer of the two drives the shared timeline.
+  const playRun = comparing ? (runA.field.times.length >= runB.field.times.length ? runA : runB) : run
+
   // Playback: the whole run takes about 12 seconds whatever its length.
-  const frameCount = run?.field.times.length ?? 0
+  const frameCount = playRun?.field.times.length ?? 0
   const shownFrame = Math.min(frame, Math.max(0, frameCount - 1))
   useEffect(() => {
     if (!playing || frameCount < 2) return
@@ -370,20 +385,7 @@ export function WorkspacePage({ plan, project, layout, saveStatus, onChange }: W
   const channelIndex = channel >= 0 ? channel : null
   const max = useMemo(() => (run ? fieldMax(run.field, channelIndex) : 0), [run, channelIndex])
   // Which cell each plan pixel shows; built once per run.
-  const cellMap = useMemo(
-    () =>
-      run
-        ? buildCellMap({
-            layout,
-            openOpeningIds: run.openOpeningIds,
-            boundary: run.indoor.boundary,
-            holes: run.indoor.holes,
-            field: run.field,
-            mpp: run.mpp,
-          })
-        : null,
-    [run, layout],
-  )
+  const cellMap = useMemo(() => (run ? cellMapFor(run, layout) : null), [run, layout])
   const overlay = useMemo<PlanOverlay | null>(() => {
     if (!run || !cellMap || !showResult) return null
     return {
@@ -395,41 +397,109 @@ export function WorkspacePage({ plan, project, layout, saveStatus, onChange }: W
     }
   }, [run, cellMap, showResult, shownFrame, channelIndex, max, layout])
 
-  // Background grid: 1 m lines (quarter lines when zoomed in, matching the
-  // 25 cm cells), aligned with the simulation grid at the outline's corner.
+  // Background grid: 1 m lines, plus the simulation cells when zoomed in. The
+  // backend picks the cell size (25 cm, coarser for big or long runs); shown
+  // is the result's grid while it is current, else the predicted one. Both
+  // start at the outline's top-left corner, as the backend grid does.
   const calibration = project.calibration
+  const predictedCell = useMemo(() => scenarioCellSize(project, scenario), [project, scenario])
   const grid = useMemo<PlanGrid | null>(() => {
     const mpp = calibration ? metersPerPixel(calibration.start, calibration.end, calibration.distance_m) : null
     if (!mpp) return null
+    if (run && !stale) return gridOf(run)
     const points = indoor?.boundary ?? []
     return {
       spacing: 1 / mpp,
+      minorSpacing: (predictedCell ?? BASE_CELL_M) / mpp,
       originX: points.length ? Math.min(...points.map((p) => p.x)) : 0,
       originY: points.length ? Math.min(...points.map((p) => p.y)) : 0,
     }
-  }, [calibration, indoor])
+  }, [calibration, indoor, run, stale, predictedCell])
 
   // Analysis: coverage follows playback.
   const coverage = useMemo(() => (run ? coverageAt(run.field, shownFrame) : null), [run, shownFrame])
-  const comparisons = useMemo<ScenarioComparison[]>(
+  /** Scenarios with a result, which can be compared. */
+  const comparable = useMemo<ComparableScenario[]>(
     () =>
       project.scenarios.flatMap((s) => {
         const r = runs[s.id]
         if (!r) return []
         const current = buildSimulationRequest(project, s)
-        return [
-          {
-            id: s.id,
-            name: s.name,
-            coverage: coverageAt(r.field, r.field.times.length - 1),
-            hours: r.hours,
-            current: s.id === scenario.id,
-            stale: !current.ok || current.key !== r.key,
-          },
-        ]
+        return [{ id: s.id, name: s.name, hours: r.hours, stale: !current.ok || current.key !== r.key }]
       }),
-    [project, runs, scenario.id],
+    [project, runs],
   )
+
+  // Per side of the comparison: frame on the shared timeline, cell map and a
+  // colour scale shared by both, so equal colours mean equal concentration.
+  const sideFrame = (r: ScenarioRun) =>
+    frameCount <= 1 ? 0 : Math.round((shownFrame / (frameCount - 1)) * (r.field.times.length - 1))
+  const cellMapA = useMemo(() => (runA ? cellMapFor(runA, layout) : null), [runA, layout])
+  const cellMapB = useMemo(() => (runB ? cellMapFor(runB, layout) : null), [runB, layout])
+  const sharedMax = useMemo(
+    () => (runA && runB ? Math.max(fieldMax(runA.field, null), fieldMax(runB.field, null)) : 0),
+    [runA, runB],
+  )
+  const frameA = runA ? sideFrame(runA) : 0
+  const frameB = runB ? sideFrame(runB) : 0
+  const sides = useMemo(() => {
+    if (!compare || !runA || !runB || !cellMapA || !cellMapB) return null
+    return ([
+      ['a', compare.a, runA, cellMapA, frameA],
+      ['b', compare.b, runB, cellMapB, frameB],
+    ] as const).map(([side, scenarioId, r, map, f]) => {
+      const s = project.scenarios.find((x) => x.id === scenarioId)
+      return {
+        side,
+        name: s?.name ?? '',
+        coverage: coverageAt(r.field, f),
+        overlay: showResult
+          ? {
+              source: renderFrame(r.field, map, f, null, sharedMax, r.channelColors),
+              x: 0,
+              y: 0,
+              width: layout.width_px,
+              height: layout.height_px,
+            }
+          : null,
+        grid: gridOf(r),
+        markers: s ? markersOf(s) : [],
+        devices: s ? devicesOf(s) : [],
+        openOpeningIds: r.openOpeningIds,
+        scents: r.scents,
+      }
+    })
+  }, [compare, runA, runB, cellMapA, cellMapB, frameA, frameB, sharedMax, showResult, layout, project, markersOf])
+
+  const startCompare = () => {
+    if (comparable.length < 2) return
+    const a = comparable.some((c) => c.id === scenario.id) ? scenario.id : comparable[0].id
+    const b = comparable.find((c) => c.id !== a)!.id
+    setItemMenu(null)
+    cancelPlacing()
+    setSelectedId(null)
+    setSelectedDeviceId(null)
+    // Both play from the start together.
+    goToFrame(0)
+    setPlaying(true)
+    setShowResult(true)
+    setCompareView(null)
+    setCompare({ a, b })
+  }
+  const stopCompare = () => {
+    setPlaying(false)
+    goToFrame(0)
+    setCompare(null)
+    setCompareView(null)
+  }
+  /** Picking the scenario already on the other side swaps the two. */
+  const changeCompare = (side: 'a' | 'b', id: string) =>
+    setCompare((c) => {
+      if (!c) return c
+      const other = side === 'a' ? c.b : c.a
+      if (id === other) return { a: c.b, b: c.a }
+      return side === 'a' ? { ...c, a: id } : { ...c, b: id }
+    })
 
   const productName = (definitionId: string) => {
     const d = products.get(definitionId)
@@ -438,34 +508,65 @@ export function WorkspacePage({ plan, project, layout, saveStatus, onChange }: W
 
   return (
     <div ref={wsRef} className="ws">
-      <PlanViewer
-        image={plan.image}
-        layout={layout}
-        imageOpacity={0.45}
-        paper={project.view.showImage}
-        grid={grid}
-        wallThickness={wallThickness}
-        overlay={overlay}
-        markers={markers}
-        devices={devices}
-        selectedMarkerId={selectedId}
-        onMarkerSelect={placing ? undefined : setSelectedId}
-        onMarkerMove={placing ? undefined : (id, position) =>
-          updateScenario((s) => ({ ...s, placements: s.placements.map((p) => (p.id === id ? { ...p, position } : p)) }))
-        }
-        onMarkerClick={(id, client) => openMenu('diffuser', id, client)}
-        selectedDeviceId={selectedDeviceId}
-        onDeviceSelect={placing ? undefined : setSelectedDeviceId}
-        onDeviceMove={placing ? undefined : (id, position) => updateDevice(id, { position })}
-        onDeviceRotate={placing ? undefined : (id, direction) => updateDevice(id, { direction_degrees: direction })}
-        onDeviceClick={(id, client) => openMenu('device', id, client)}
-        onInteract={() => setItemMenu(null)}
-        onPlanClick={placing ? place : undefined}
-        openOpeningIds={openOpeningIds}
-        onOpeningToggle={toggleOpening}
-        fitInsetTop={headerHeight}
-        fitButton={false}
-      />
+      {sides ? (
+        // Comparison: read-only plans side by side, panning and zooming together.
+        <div className="ws-split">
+          {sides.map((s) => (
+            <div key={s.side} className="ws-split__pane">
+              <PlanViewer
+                image={plan.image}
+                layout={layout}
+                imageOpacity={0.45}
+                paper={project.view.showImage}
+                grid={s.grid}
+                wallThickness={wallThickness}
+                overlay={s.overlay}
+                markers={s.markers}
+                devices={s.devices}
+                openOpeningIds={s.openOpeningIds}
+                fitInsetTop={headerHeight}
+                fitButton={false}
+                view={compareView}
+                onViewChange={setCompareView}
+              />
+              <p className="ws-split__label">
+                <span className={`ws-ab__badge ws-ab__badge--${s.side}`}>{s.side.toUpperCase()}</span>
+                <span className="ws-split__name">{s.name}</span>
+                <span className="ws-split__value">{Math.round(s.coverage * 100)}%</span>
+              </p>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <PlanViewer
+          image={plan.image}
+          layout={layout}
+          imageOpacity={0.45}
+          paper={project.view.showImage}
+          grid={grid}
+          wallThickness={wallThickness}
+          overlay={overlay}
+          markers={markers}
+          devices={devices}
+          selectedMarkerId={selectedId}
+          onMarkerSelect={placing ? undefined : setSelectedId}
+          onMarkerMove={placing ? undefined : (id, position) =>
+            updateScenario((s) => ({ ...s, placements: s.placements.map((p) => (p.id === id ? { ...p, position } : p)) }))
+          }
+          onMarkerClick={(id, client) => openMenu('diffuser', id, client)}
+          selectedDeviceId={selectedDeviceId}
+          onDeviceSelect={placing ? undefined : setSelectedDeviceId}
+          onDeviceMove={placing ? undefined : (id, position) => updateDevice(id, { position })}
+          onDeviceRotate={placing ? undefined : (id, direction) => updateDevice(id, { direction_degrees: direction })}
+          onDeviceClick={(id, client) => openMenu('device', id, client)}
+          onInteract={() => setItemMenu(null)}
+          onPlanClick={placing ? place : undefined}
+          openOpeningIds={openOpeningIds}
+          onOpeningToggle={toggleOpening}
+          fitInsetTop={headerHeight}
+          fitButton={false}
+        />
+      )}
 
       <FloatingWindow
         title="작업"
@@ -474,6 +575,7 @@ export function WorkspacePage({ plan, project, layout, saveStatus, onChange }: W
         initialY={windowPlaces.work.y}
         width={WINDOW_WIDTH}
         minY={headerHeight + 4}
+        hidden={comparing}
         className="ws-panel"
       >
         <section className="ws-panel__section">
@@ -612,6 +714,28 @@ export function WorkspacePage({ plan, project, layout, saveStatus, onChange }: W
         </section>
 
         <section className="ws-panel__section">
+          <h3 className="ws-panel__title">실내 공기 섞임</h3>
+          <div className="ws-segment" role="radiogroup" aria-label="실내 공기 섞임">
+            {MIXING_PRESETS.map((m) => (
+              <button
+                key={m}
+                type="button"
+                role="radio"
+                aria-checked={project.mixing === m}
+                className={project.mixing === m ? 'is-selected' : ''}
+                disabled={running}
+                onClick={() => onChange((p) => ({ ...p, mixing: m }))}
+              >
+                {MIXING_LABELS[m]}
+              </button>
+            ))}
+          </div>
+          <p className="field__hint">
+            사람이 자주 오가거나 냉난방을 틀면 공기가 더 섞여 향이 멀리 퍼져요. 잘 모르겠으면 '중'으로 두세요.
+          </p>
+        </section>
+
+        <section className="ws-panel__section">
           <div className="ws-duration">
             <span className="ws-duration__label" id="ws-duration-label">
               시뮬레이션 시간
@@ -637,7 +761,7 @@ export function WorkspacePage({ plan, project, layout, saveStatus, onChange }: W
               <p className={`note${estimate > MAX_RUN_SECONDS * 0.8 ? ' note--error' : ''}`}>
                 {estimate > MAX_RUN_SECONDS * 0.8
                   ? `예상 계산 시간이 ${MAX_RUN_SECONDS}초에 가까워 중간에 멈출 수 있어요. 시간을 줄여 주세요.`
-                  : `예상 계산 시간 약 ${formatEstimate(estimate)}`}
+                  : `예상 계산 시간 약 ${formatEstimate(estimate)}${predictedCell ? ` · 계산 칸 ${Math.round(predictedCell * 100)} cm` : ''}`}
               </p>
             )}
           </div>
@@ -680,15 +804,22 @@ export function WorkspacePage({ plan, project, layout, saveStatus, onChange }: W
       >
         <AnalysisPanel
           coverage={coverage}
-          time={run ? (run.field.times[shownFrame] ?? 0) : null}
+          time={playRun ? (playRun.field.times[shownFrame] ?? 0) : null}
           running={running && job.scenarioId === scenario.id}
-          comparisons={comparisons}
-          scents={run ? run.scents : scentsOf(scenario.placements)}
-          onSelectScenario={(id) => onChange((p) => ({ ...p, activeScenarioId: id }))}
+          comparable={comparable}
+          compare={
+            sides && compare
+              ? { a: compare.a, b: compare.b, coverageA: sides[0].coverage, coverageB: sides[1].coverage }
+              : null
+          }
+          scents={sides ? mergeScents(sides[0].scents, sides[1].scents) : run ? run.scents : scentsOf(scenario.placements)}
+          onStartCompare={startCompare}
+          onStopCompare={stopCompare}
+          onCompareChange={changeCompare}
         />
       </FloatingWindow>
 
-      {itemMenu?.kind === 'diffuser' && scenario.placements.some((p) => p.id === itemMenu.id) && (
+      {!comparing && itemMenu?.kind === 'diffuser' && scenario.placements.some((p) => p.id === itemMenu.id) && (
         <div className="ws-marker-menu" style={{ left: itemMenu.x + 14, top: itemMenu.y + 10 }}>
           <span className="ws-marker-menu__name">
             {productName(scenario.placements.find((p) => p.id === itemMenu.id)!.definition_id)}
@@ -700,7 +831,8 @@ export function WorkspacePage({ plan, project, layout, saveStatus, onChange }: W
         </div>
       )}
 
-      {itemMenu?.kind === 'device' &&
+      {!comparing &&
+        itemMenu?.kind === 'device' &&
         (() => {
           const device = scenario.airflow_devices.find((d) => d.id === itemMenu.id)
           if (!device) return null
@@ -729,23 +861,31 @@ export function WorkspacePage({ plan, project, layout, saveStatus, onChange }: W
           )
         })()}
 
-      {(placing || placeHint) && (
+      {!comparing && (placing || placeHint) && (
         <p className="ws-hint" role="status">
           {placeHint ?? '놓을 곳을 클릭하세요 · Esc로 취소'}
         </p>
       )}
 
-      {run && (
+      {playRun && (
         <PlaybackBar
-          times={run.field.times}
+          times={playRun.field.times}
           frame={shownFrame}
           playing={playing}
           visible={showResult}
-          stale={stale}
-          channels={run.field.placementIds.map((id) => {
-            const index = scenario.placements.findIndex((p) => p.id === id)
-            return { id, label: index >= 0 ? `${index + 1}번 · ${productName(scenario.placements[index].definition_id)}` : '지운 디퓨저' }
-          })}
+          stale={!comparing && stale}
+          // One diffuser at a time only makes sense for a single scenario.
+          channels={
+            comparing
+              ? []
+              : playRun.field.placementIds.map((id) => {
+                  const index = scenario.placements.findIndex((p) => p.id === id)
+                  return {
+                    id,
+                    label: index >= 0 ? `${index + 1}번 · ${productName(scenario.placements[index].definition_id)}` : '지운 디퓨저',
+                  }
+                })
+          }
           channel={channelIndex !== null ? channelPlacementId : null}
           onFrame={(f) => {
             setPlaying(false)
@@ -766,6 +906,29 @@ export function WorkspacePage({ plan, project, layout, saveStatus, onChange }: W
       )}
     </div>
   )
+}
+
+/** Which cell each plan pixel shows for a run (doors and outline as simulated). */
+function cellMapFor(r: ScenarioRun, layout: Layout) {
+  return buildCellMap({
+    layout,
+    openOpeningIds: r.openOpeningIds,
+    boundary: r.indoor.boundary,
+    holes: r.indoor.holes,
+    field: r.field,
+    mpp: r.mpp,
+  })
+}
+
+/** Background grid of a run: 1 m lines and its own simulation cells. */
+function gridOf(r: ScenarioRun): PlanGrid {
+  const g = r.field.grid
+  return { spacing: 1 / r.mpp, minorSpacing: g.cell_size_m / r.mpp, originX: g.origin_m.x / r.mpp, originY: g.origin_m.y / r.mpp }
+}
+
+/** A scenario's fans and air conditioners as plan devices. */
+function devicesOf(s: Scenario): PlanDevice[] {
+  return s.airflow_devices.map((d) => ({ id: d.id, kind: d.type, position: d.position, direction: d.direction_degrees }))
 }
 
 function sameTool(a: Placing, b: Placing): boolean {
@@ -802,4 +965,10 @@ function TrashIcon() {
       <path d="M2 3.5h10M5.5 3.5V2h3v1.5M3.5 3.5l.6 8.5h5.8l.6-8.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
+}
+
+/** Scents of both compared runs, without repeats, for one legend. */
+function mergeScents(a: ScenarioRun['scents'], b: ScenarioRun['scents']): ScenarioRun['scents'] {
+  const seen = new Set(a.map((s) => s.label))
+  return [...a, ...b.filter((s) => !seen.has(s.label))]
 }

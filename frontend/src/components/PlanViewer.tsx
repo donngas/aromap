@@ -23,9 +23,14 @@ export interface PlanDevice {
   direction: number
 }
 
-/** Major lines every `spacing` image pixels (e.g. 1 m), with quarter lines when zoomed in. */
+/**
+ * Background grid in image pixels: major lines every `spacing` (e.g. 1 m) and,
+ * when zoomed in, faint lines every `minorSpacing` (e.g. the simulation cells).
+ * Both pass through (originX, originY).
+ */
 export interface PlanGrid {
   spacing: number
+  minorSpacing: number
   originX: number
   originY: number
 }
@@ -92,9 +97,17 @@ interface PlanViewerProps {
   fitButton?: boolean
   /** Screen pixels at the top covered by something else (e.g. a see-through header); fitting avoids them. */
   fitInsetTop?: number
+  /**
+   * Shared pan/zoom: when given, the viewer shows this view and reports its
+   * own zooming, panning and fitting through onViewChange (to keep several
+   * viewers in step).
+   */
+  view?: PlanView | null
+  onViewChange?: (view: PlanView) => void
 }
 
-interface View {
+/** Pan and zoom: image pixels are scaled by `scale` and offset by (tx, ty) screen pixels. */
+export interface PlanView {
   scale: number
   tx: number
   ty: number
@@ -147,15 +160,33 @@ export function PlanViewer({
   toolbar,
   fitButton = true,
   fitInsetTop = 0,
+  view = null,
+  onViewChange,
 }: PlanViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const viewRef = useRef<View>({ scale: 1, tx: 0, ty: 0 })
+  const viewRef = useRef<PlanView>({ scale: 1, tx: 0, ty: 0 })
   const dragRef = useRef<Drag | null>(null)
   // Latest outline for drag handlers, which outlive a single render.
   const polygonRef = useRef(polygon)
   const [size, setSize] = useState({ width: 0, height: 0 })
   const [redraw, setRedraw] = useState(0)
+
+  // Latest onViewChange for listeners registered once.
+  const onViewChangeRef = useRef(onViewChange)
+  useEffect(() => {
+    onViewChangeRef.current = onViewChange
+  }, [onViewChange])
+  /** Applies a new pan/zoom and shares it. */
+  const commitView = useCallback((next: PlanView) => {
+    viewRef.current = next
+    setRedraw((n) => n + 1)
+    onViewChangeRef.current?.(next)
+  }, [])
+  // A shared view from outside replaces ours (runs before drawing).
+  useEffect(() => {
+    if (view) viewRef.current = view
+  }, [view])
   const [dragOver, setDragOver] = useState(false)
   const [hoverWallId, setHoverWallId] = useState<string | null>(null)
   const [hoverOpeningId, setHoverOpeningId] = useState<string | null>(null)
@@ -170,13 +201,12 @@ export function PlanViewer({
     if (!image || size.width === 0) return
     const height = Math.max(1, size.height - fitInsetTop)
     const scale = Math.min(size.width / image.naturalWidth, height / image.naturalHeight) * 0.92
-    viewRef.current = {
+    commitView({
       scale,
       tx: (size.width - image.naturalWidth * scale) / 2,
       ty: fitInsetTop + (height - image.naturalHeight * scale) / 2,
-    }
-    setRedraw((n) => n + 1)
-  }, [image, size.width, size.height, fitInsetTop])
+    })
+  }, [image, size.width, size.height, fitInsetTop, commitView])
 
   useEffect(() => {
     const el = containerRef.current
@@ -258,6 +288,7 @@ export function PlanViewer({
     devices,
     selectedDeviceId,
     onDeviceRotate,
+    view,
     size,
     redraw,
   ])
@@ -278,19 +309,18 @@ export function PlanViewer({
       const rect = canvas.getBoundingClientRect()
       const sx = event.clientX - rect.left
       const sy = event.clientY - rect.top
-      const view = viewRef.current
+      const current = viewRef.current
       const factor = Math.exp(-event.deltaY * 0.0015)
-      const scale = Math.min(40, Math.max(0.05, view.scale * factor))
-      viewRef.current = {
+      const scale = Math.min(40, Math.max(0.05, current.scale * factor))
+      commitView({
         scale,
-        tx: sx - ((sx - view.tx) * scale) / view.scale,
-        ty: sy - ((sy - view.ty) * scale) / view.scale,
-      }
-      setRedraw((n) => n + 1)
+        tx: sx - ((sx - current.tx) * scale) / current.scale,
+        ty: sy - ((sy - current.ty) * scale) / current.scale,
+      })
     }
     canvas.addEventListener('wheel', onWheel, { passive: false })
     return () => canvas.removeEventListener('wheel', onWheel)
-  }, [])
+  }, [commitView])
 
   const toImage = (clientX: number, clientY: number): PixelPoint => {
     const rect = canvasRef.current!.getBoundingClientRect()
@@ -489,8 +519,7 @@ export function PlanViewer({
           const dy = event.clientY - drag.y
           if (drag.moved || Math.hypot(dx, dy) > CLICK_TOLERANCE_PX) {
             drag.moved = true
-            viewRef.current = { ...viewRef.current, tx: drag.tx + dx, ty: drag.ty + dy }
-            setRedraw((n) => n + 1)
+            commitView({ ...viewRef.current, tx: drag.tx + dx, ty: drag.ty + dy })
           }
         }}
         onPointerUp={(event) => {
@@ -775,7 +804,7 @@ function drawGrid(
   visible: { x: number; y: number; width: number; height: number },
 ) {
   const levels = [
-    { step: grid.spacing / 4, color: 'rgba(78, 83, 76, 0.07)', minScreen: 10 },
+    { step: grid.minorSpacing, color: 'rgba(78, 83, 76, 0.07)', minScreen: 10 },
     { step: grid.spacing, color: 'rgba(78, 83, 76, 0.16)', minScreen: 6 },
   ]
   ctx.lineWidth = 1 / scale
