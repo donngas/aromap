@@ -9,16 +9,18 @@ from app.infrastructure.storage import LocalStorage
 from app.simulations.engine.solver import SOLVER_VERSION, simulate
 from app.simulations.errors import PreparationError, SimulationError
 from app.simulations.preparation import prepare_run
+from app.simulations.limits import ExecutionLimits
 from app.simulations.schemas import SimulationRequest
 
 logger = logging.getLogger(__name__)
 
 
-def execute_simulation(root: str, job_id: str, expires_at: float):
+def execute_simulation(root: str, job_id: str, expires_at: float, max_working_bytes: int = 512 * 1024 * 1024):
     storage = LocalStorage(Path(root))
     try:
         request = SimulationRequest.model_validate_json(storage.path(f"results/{job_id}.request.json").read_text())
-        run = prepare_run(request, model_version=SOLVER_VERSION)
+        run = prepare_run(request, model_version=SOLVER_VERSION,
+                          execution_limits=ExecutionLimits(max_working_bytes=max_working_bytes))
         output = simulate(run)
         grid = output.grid
         # NPZ is a ZIP of standard NPY arrays and can be read without pickle.

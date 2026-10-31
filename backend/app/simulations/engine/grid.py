@@ -30,10 +30,10 @@ def grid_extent(domain, cell_size_m: float, limits: PreparationLimits):
     return polygon, MetricPoint(x=left, y=top), rows, columns
 
 
-def _barriers(geometry):
+def _barriers(geometry, exterior_ids=frozenset()):
     doors_by_wall = {}
     for opening in geometry.openings:
-        if opening.kind == "door" and opening.is_open:
+        if opening.kind == "door" and opening.is_open and opening.id not in exterior_ids:
             doors_by_wall.setdefault(opening.wall_id, []).append(segment_for(opening))
     segments = []
     for wall in geometry.walls:
@@ -56,7 +56,7 @@ def _barriers(geometry):
     return segments
 
 
-def build_grid(input: SimulationInput, limits: PreparationLimits | None = None) -> PreparedGrid:
+def build_grid(input: SimulationInput, limits: PreparationLimits | None = None, exterior_ids=frozenset()) -> PreparedGrid:
     limits = limits or PreparationLimits()
     cell = input.grid_cell_size_m
     polygon, origin, rows, columns = grid_extent(input.geometry.indoor_domain, cell, limits)
@@ -83,7 +83,7 @@ def build_grid(input: SimulationInput, limits: PreparationLimits | None = None) 
     segments = shapely.linestrings(centers[pairs])
     # Prevent shortcuts across concavities/holes even if both centers are inside.
     allowed = shapely.covers(polygon, segments)
-    barriers = _barriers(input.geometry)
+    barriers = _barriers(input.geometry, exterior_ids)
     if barriers and len(segments):
         intersections = STRtree(barriers).query(segments, predicate="intersects")
         allowed[np.unique(intersections[0])] = False
@@ -98,7 +98,7 @@ def build_grid(input: SimulationInput, limits: PreparationLimits | None = None) 
     if inset.is_empty or inset.geom_type == "MultiPolygon":
         warnings.append("The footprint contains thin regions/passages that may be lost at this cell size.")
     for opening in input.geometry.openings:
-        if opening.kind != "door" or not opening.is_open:
+        if opening.kind != "door" or not opening.is_open or opening.id in exterior_ids:
             continue
         door = segment_for(opening)
         if door.length < cell:

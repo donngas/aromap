@@ -19,10 +19,11 @@ class Settings:
     cors_origins: tuple[str, ...] = ("http://localhost:5173",)
     recognition_callable: str = DEFAULT_RECOGNITION_CALLABLE
     recognition_timeout_seconds: float = 60.0
+    simulation_max_working_bytes: int = 512 * 1024 * 1024
 
     def __post_init__(self):
         for name in ("max_upload_bytes", "max_image_pixels", "retention_seconds",
-                     "cleanup_interval_seconds", "queue_capacity"):
+                     "cleanup_interval_seconds", "queue_capacity", "simulation_max_working_bytes"):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
         if not math.isfinite(self.recognition_timeout_seconds) or self.recognition_timeout_seconds <= 0:
@@ -34,7 +35,7 @@ class Settings:
     def from_env(cls):
         values = {}
         for name in ("max_upload_bytes", "max_image_pixels", "retention_seconds",
-                     "cleanup_interval_seconds", "queue_capacity"):
+                     "cleanup_interval_seconds", "queue_capacity", "simulation_max_working_bytes"):
             if (value := os.getenv(f"AROMAP_{name.upper()}")) is not None:
                 values[name] = int(value)
         if (value := os.getenv("AROMAP_CORS_ORIGINS")) is not None:

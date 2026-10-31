@@ -9,7 +9,10 @@ from app.simulations.errors import PreparationError
 DEFAULT_CELL_SIZE_M = 0.25
 DEFAULT_DURATION_S = 3600.0
 DEFAULT_SAMPLE_INTERVAL_S = 30.0
-DEFAULT_DIFFUSIVITY_M2_PER_S = 0.005
+# Rounded quartiles/median of Cheng et al.'s 11 residential estimates. These
+# are scenario presets, not calibrated residual turbulence for every room.
+MIXING_PRESETS_M2_PER_S = {"low": 0.002, "medium": 0.0045, "high": 0.006}
+DEFAULT_DIFFUSIVITY_M2_PER_S = MIXING_PRESETS_M2_PER_S["medium"]
 DEFAULT_AIR_CHANGES_PER_HOUR = 0.5
 DEFAULT_REMOVAL_RATE_PER_S = DEFAULT_AIR_CHANGES_PER_HOUR / 3600
 
@@ -67,7 +70,7 @@ class ExecutionLimits:
         if (not isinstance(estimated_bytes, (int, float)) or isinstance(estimated_bytes, bool)
                 or estimated_bytes < 0 or estimated_bytes > self.max_working_bytes
                 or not math.isfinite(estimated_bytes)):
-            raise PreparationError("resource_limit", "Estimated solver working memory exceeds the configured budget.")
+            raise PreparationError("resource_limit", "Estimated solver working memory exceeds the configured budget; use a larger cell size or reduce channels or samples.")
 
     def check_deadline(self, started_at: float):
         if time.monotonic() - started_at >= self.max_runtime_s:

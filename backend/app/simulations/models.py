@@ -52,6 +52,9 @@ class OpeningGeometry(ContractModel):
     wall_id: str = Field(min_length=1)
     start: MetricPoint = Field(description="Opening start on its parent wall, in meters.")
     end: MetricPoint = Field(description="Opening end on its parent wall, in meters.")
+    boundary_kind: Literal["interior", "exterior"] | None = Field(
+        default=None, description="Optional classification for ambiguous wall geometry."
+    )
 
 
 class MetricGeometry(ContractModel):
@@ -88,6 +91,20 @@ class EnvironmentalConditions(ContractModel):
     removal_rate_per_s: float | None = Field(default=None, ge=0)
 
 
+class AirflowDevice(ContractModel):
+    id: str = Field(min_length=1)
+    type: Literal["fan", "ac"]
+    position_m: MetricPoint
+    direction_degrees: float = Field(description="Direction toward which air travels: 0 right, 90 down.")
+    strength: Literal["low", "medium", "high"] = "medium"
+
+
+class AirflowSettings(ContractModel):
+    outdoor_conditions: Literal["calm", "moderate", "breezy"] = "calm"
+    wind_direction_degrees: float = Field(default=0, description="Direction toward which wind travels: 0 right, 90 down.")
+    devices: list[AirflowDevice] = Field(default_factory=list, max_length=8)
+
+
 class SimulationSettings(ContractModel):
     duration_s: float = Field(default=DEFAULT_DURATION_S, gt=0)
     sample_interval_s: float | None = Field(
@@ -99,9 +116,12 @@ class SimulationSettings(ContractModel):
         default=None, gt=0, description="Cell side length in meters; preparation defaults to 0.25 when omitted.",
     )
     effective_diffusivity_m2_per_s: float | None = Field(default=None, gt=0)
+    mixing_preset: Literal["low", "medium", "high"] | None = None
 
     @model_validator(mode="after")
     def resolve_sampling(self):
+        if self.mixing_preset is not None and self.effective_diffusivity_m2_per_s is not None:
+            raise ValueError("Supply mixing_preset or effective_diffusivity_m2_per_s, not both")
         if self.sample_interval_s is not None and self.sample_times_s is not None:
             raise ValueError("Supply at most one of sample_interval_s or sample_times_s")
         if self.sample_interval_s is not None and self.sample_interval_s > self.duration_s:
@@ -119,8 +139,7 @@ class SimulationConfiguration(ContractModel):
 
     Geometry and positions are FE-derived meters. Preparation validates geometry,
     estimates relative emissions, and resolves provisional spreading/removal defaults.
-    Open-window behavior and the numerical solver remain future work. The HTTP
-    endpoint is still explicitly unavailable.
+    The optional airflow configuration describes an idealized steady field.
     """
 
     geometry_m: MetricGeometry = Field(
@@ -132,6 +151,7 @@ class SimulationConfiguration(ContractModel):
     )
     opening_states: list[OpeningState] = Field(default_factory=list)
     conditions: EnvironmentalConditions = Field(default_factory=EnvironmentalConditions)
+    airflow: AirflowSettings = Field(default_factory=AirflowSettings)
     settings: SimulationSettings = Field(default_factory=SimulationSettings)
 
     @model_validator(mode="after")
@@ -147,6 +167,7 @@ class SimulationConfiguration(ContractModel):
         openings = self.geometry_m.doors + self.geometry_m.windows
         opening_ids = unique([o.id for o in openings], "door/window IDs")
         unique([s.opening_id for s in self.opening_states], "opening states")
+        unique([d.id for d in self.airflow.devices], "airflow device IDs")
         if any(p.definition_id not in definitions for p in self.placements):
             raise ValueError("Placement references an unknown definition")
         if any(o.wall_id not in walls for o in openings):
@@ -207,6 +228,7 @@ class SimulationInput(ContractModel):
     sample_times_s: list[float] = Field(min_length=1)
     grid_cell_size_m: float = Field(gt=0)
     parameters: ModelParameters
+    airflow: AirflowSettings = Field(default_factory=AirflowSettings)
     assumptions: list[str]
     initial_state_fingerprint: str | None = Field(
         default=None, description="Internal resolved initial-state identity; null means zero start. Not a job ID.",

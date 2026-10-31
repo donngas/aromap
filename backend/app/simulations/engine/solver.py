@@ -16,7 +16,7 @@ from app.simulations.engine.models import EngineOutput, PreparedSimulation, Reso
 from app.simulations.engine.state import grid_signature, initial_concentrations
 from app.simulations.errors import PreparationError, SimulationError
 
-SOLVER_VERSION = "square-balance-backward-euler-v1"
+SOLVER_VERSION = "square-balance-airflow-v3"
 
 
 @dataclass(frozen=True)
@@ -54,7 +54,22 @@ def transport_matrix(run: PreparedSimulation) -> csc_matrix:
     rows = np.concatenate((edges[:, 0], edges[:, 1], np.arange(count)))
     columns = np.concatenate((edges[:, 1], edges[:, 0], np.arange(count)))
     values = np.concatenate((np.full(2 * len(edges), -coupling), degree * coupling))
-    return csc_matrix((values, (rows, columns)), shape=(count, count))
+    operator = csc_matrix((values, (rows, columns)), shape=(count, count))
+    if run.airflow_field is not None:
+        field = run.airflow_field
+        # Conservative first-order upwind transfers between adjacent cells.
+        flux = field.edge_flux / grid.cell_size_m ** 2
+        upstream = np.where(flux >= 0, edges[:, 0], edges[:, 1])
+        downstream = np.where(flux >= 0, edges[:, 1], edges[:, 0])
+        rate = np.abs(flux)
+        operator += csc_matrix((np.r_[rate, -rate],
+                                (np.r_[upstream, downstream], np.r_[upstream, upstream])),
+                               shape=(count, count))
+        # Net outflow and additional balanced two-way exchange remove scent locally.
+        cells = np.array([opening.cell_index for opening in run.exterior_openings], dtype=int)
+        loss = (np.maximum(field.boundary_outflow, 0) + field.boundary_exchange) / grid.cell_size_m ** 2
+        operator += csc_matrix((loss, (cells, cells)), shape=(count, count))
+    return operator
 
 
 def source_rates(run: PreparedSimulation) -> np.ndarray:
@@ -117,6 +132,10 @@ def simulate(prepared: PreparedSimulation, options: SolverOptions | None = None)
     if not math.isfinite(spreading) or spreading <= 0 or not math.isfinite(removal) or removal < 0:
         raise SimulationError("numerical_range", "Transport parameters are outside numerical limits.")
     target_step = min(options.max_step_s, 0.25 / spreading, 0.05 / removal if removal else math.inf)
+    if run.airflow_field is not None and len(run.airflow_field.edge_flux):
+        speed = np.max(np.abs(run.airflow_field.edge_flux)) / grid.cell_size_m
+        if speed > 0:
+            target_step = min(target_step, 0.5 * grid.cell_size_m / speed)
     ratio = data.duration_s / target_step if target_step > 0 else math.inf
     if not math.isfinite(ratio) or ratio > options.max_steps:
         raise PreparationError("resource_limit", "Requested duration/parameters require too many internal solver steps.")
@@ -125,6 +144,9 @@ def simulate(prepared: PreparedSimulation, options: SolverOptions | None = None)
 
     output_bytes = len(samples) * channels * grid.rows * grid.columns * 4
     grid_bytes = grid.active_mask.nbytes + grid.active_index.nbytes + grid.connections.nbytes
+    if run.airflow_field is not None:
+        grid_bytes += (run.airflow_field.edge_flux.nbytes + run.airflow_field.boundary_outflow.nbytes
+                       + run.airflow_field.boundary_exchange.nbytes)
     # Reserve space for sparse assembly, native LU fill, copies, output, and state.
     # Grid-like sparse LU fill varies; this is a guard estimate, not a peak-RSS cap.
     base_bytes = output_bytes + grid_bytes + 8 * count * channels * 8 + 256 * count

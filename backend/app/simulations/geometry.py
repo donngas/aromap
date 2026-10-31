@@ -69,8 +69,6 @@ def resolve_geometry(configuration: SimulationConfiguration) -> SimulationGeomet
             if snapped.length <= GEOMETRY_TOLERANCE_M:
                 raise PreparationError("invalid_opening", f"Opening {opening.id} has no usable length.")
             is_open = states.get(opening.id, False)
-            if kind == "window" and is_open:
-                raise PreparationError("unsupported_open_window", "Open-window behavior has not been defined yet.")
             openings.append(ResolvedOpening(
                 **opening.model_dump(exclude={"start", "end"}),
                 start=MetricPoint(x=start.x, y=start.y), end=MetricPoint(x=end.x, y=end.y),

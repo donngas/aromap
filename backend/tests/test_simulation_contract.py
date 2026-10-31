@@ -117,3 +117,39 @@ def test_preparation_failure_is_reported_as_job_error(tmp_path):
         assert status["state"] == "failed"
         assert status["error"]["code"] == "no_sources"
         assert client.get(accepted.json()["status_url"] + "/fields").status_code == 404
+
+
+def test_api_runs_with_open_window_and_fan(tmp_path):
+    with TestClient(create_app(Settings(data_dir=tmp_path))) as client:
+        body = example('request')
+        body['settings'].update(duration_s=1, sample_interval_s=1)
+        body['opening_states'][0]['is_open'] = True
+        body['airflow'] = {'outdoor_conditions': 'moderate', 'wind_direction_degrees': 90,
+                           'devices': [{'id': 'fan', 'type': 'fan', 'position_m': {'x': 1, 'y': 1}, 'direction_degrees': 0, 'strength': 'medium'}]}
+        accepted = client.post('/api/simulations', json=body)
+        assert accepted.status_code == 202, accepted.text
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            status = client.get(accepted.json()['status_url']).json()
+            if status['state'] in ('succeeded', 'failed'):
+                break
+            time.sleep(.05)
+        assert status['state'] == 'succeeded', status
+        assert any('Airflow:' in item for item in status['result']['resolved_assumptions'])
+        assert any('Exterior openings' in item for item in status['result']['warnings'])
+
+
+def test_api_applies_configured_simulation_memory_budget(tmp_path):
+    with TestClient(create_app(Settings(data_dir=tmp_path, simulation_max_working_bytes=1000))) as client:
+        body = example('request')
+        body['settings'].update(duration_s=1, sample_interval_s=1)
+        accepted = client.post('/api/simulations', json=body)
+        assert accepted.status_code == 202
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            status = client.get(accepted.json()['status_url']).json()
+            if status['state'] in ('succeeded', 'failed'):
+                break
+            time.sleep(.05)
+        assert status['state'] == 'failed'
+        assert status['error']['code'] == 'resource_limit'

@@ -29,7 +29,7 @@ def test_default_policy_and_explicit_overrides_are_reproducible():
     run = prepare_run(config, model_version="test")
     assert run.input.duration_s == 3600
     assert len(run.input.sample_times_s) == 121
-    assert run.input.parameters.effective_diffusivity_m2_per_s == 0.005
+    assert run.input.parameters.effective_diffusivity_m2_per_s == 0.0045
     assert run.input.parameters.removal_rate_per_s == pytest.approx(0.5 / 3600)
     assert run.input.sources[0].profile.rate_relative_units_per_s == pytest.approx(100000 / (60 * 86400))
     assert run.input.input_fingerprint == prepare_input(config, model_version="test").input_fingerprint
