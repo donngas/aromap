@@ -23,8 +23,28 @@ The backend service can also run from the repository root:
 docker compose up --build backend
 ```
 
+The default Compose target installs development dependencies and enables reload
+for mounted `app/` source. Run tests in that environment with:
+
+```sh
+docker compose run --rm --no-deps backend uv run --locked pytest -q
+```
+
+For production-style staging without reload, development dependencies, or source
+mounts:
+
+```sh
+docker compose -p aromap-staging -f compose.yaml -f compose.staging.yaml up --build backend
+```
+
+Both modes publish `${BACKEND_PORT:-8000}` on `${HOST_BIND:-127.0.0.1}`. Swagger
+remains directly accessible on that host port. `/health` returns `{"status":"ok"}`
+after initialization and checks SQLite connectivity; it does not require a
+recognition provider. Compose uses this endpoint for backend readiness.
+
 Compose mounts `backend-data` at `/data`, retaining SQLite and files across container
-recreation. `docker compose down -v` deletes that volume. API documentation and
+recreation. Staging's separate project name gives it a separate volume. Running
+`down -v` with the corresponding Compose/project arguments deletes that volume. API documentation and
 schemas are at `/docs` and `/openapi.json`.
 
 Recognition is unavailable by default. After integrating a provider implementing
@@ -38,7 +58,9 @@ current unimplemented stub. No mock recognition is served by production endpoint
 Environment variables (or `Settings` in tests):
 
 For Compose, these can be set in the repository root `.env` (the data directory
-remains `/data`). For local uv execution, export them in the shell; `.env` is not
+remains `/data`); see root `.env.example`. A blank CORS setting in Compose derives
+localhost/127.0.0.1 origins from `FRONTEND_PORT`. For local uv execution, export
+settings in the shell; `.env` is not
 automatically loaded by the application.
 
 | Variable | Default | Meaning |
