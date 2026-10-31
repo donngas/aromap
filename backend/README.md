@@ -726,10 +726,61 @@ drawn this way are expected to come out right without manual fixes:
 | Wall | Solid band clearly thicker than other lines | Wall centerline; short returns at corners and beside doors (at least one wall thickness long) are kept when they meet a longer wall |
 | Door | Gap in a wall with a quarter-circle swing arc centered on the hinge | Door from the hinge to the arc's end; two facing arcs make a double door. A door frame under one wall thickness joins the door |
 | Window | Gap in a wall with 2+ thin parallel lines inside the wall's thickness | Window across the gap |
-| Doorway | Door-sized gap between aligned walls, no symbol | Door, unless both sides are room corners turning the same way (open floor, e.g. a passage), which stays open |
+| Doorway | Door-sized gap between aligned walls, no symbol | Open floor (e.g. a passage between the sales floor and the stockroom) |
 
 Door swings are found as arcs first (circle fit on curved strokes), so text,
 furniture outlines, and full circles such as round tables are not read as doors.
+
+#### Input checklist
+
+What an image needs for recognition to work, with the current thresholds. **T**
+is the wall thickness measured from the image. The committed plans in
+[`fixtures/`](tests/floor_plans/recognition/fixtures) all meet it.
+
+**Image**
+- Clean digital drawing on a light background, not a photo, scan, or sketch.
+- About 400–2000 px on the long side. Larger images are scaled down to 2000 px;
+  on small images walls are only a few pixels thick, so arcs and glazing get lost.
+- No sheet frame or title block close to the walls. Dimension lines and text
+  outside the building are fine.
+
+**Walls**
+- Dark (gray 100–180 or darker), at least 3 px, and clearly thicker than every
+  other line (about twice furniture and text lines). Strokes under 0.35 T are
+  ignored.
+- Horizontal or vertical only; diagonal walls are missed.
+- At least 3 T long, or 1 T if the piece meets another wall.
+- Outer walls form a closed loop: every gap in them needs a door or window
+  symbol, otherwise there is no indoor outline.
+- Little extra drawn on the wall lines; corner column markers add small steps to
+  the outline.
+
+**Doors**
+- Quarter-circle swing arc (45–120°), hinged on the wall line (within 1.5 T or
+  30% of the radius), radius at least 2 T. Solid, dashed, or colored arcs work.
+- Gap 3 T–15 T wide (up to 25% of the image's long side when an arc confirms
+  it), with the arc covering at least 60% of it.
+- Arcs within 1 T of each other form one double door; arcs with wall between
+  them are separate doors.
+- Sliding doors, or door leaves drawn as thin rectangles, are read as doors only
+  on inner walls (see Windows).
+- Not supported: a half-open leaf with only a short arc.
+
+**Windows**
+- At least 2 thin parallel lines inside the gap, each along at least 60% of it,
+  within 0.5–0.75 T of the wall line.
+- Each line at most T/2 or 4 px wide; together they cover at most 80% of that
+  band (more is a floor color, not glass).
+- On outer walls. Glazing on an inner wall (more than 2 T inside the outline) is
+  read as a door.
+- Up to half the image's long side wide (glass walls).
+
+**Open floor**
+- A gap with no symbol stays open floor.
+
+**Clutter**
+- If 15% or more of the wall-like length is detached from the walls, the draft
+  warns that results may be unreliable.
 
 - Caller supplies an absolute path to a prepared image, retains it throughout the
   call, and owns storage/cleanup. Recognition must not modify/delete the original.
