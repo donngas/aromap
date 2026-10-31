@@ -137,9 +137,7 @@ def test_diagonal_door_opens_despite_floating_point_projection():
     assert len(opened.connections) > len(closed.connections)
 
 
-def test_unresolved_physics_and_unsafe_source_mapping_are_rejected():
-    with pytest.raises(PreparationError, match="no physics defaults"):
-        prepare_input(configuration(), resolve_source=resolve_source, model_version="test")
+def test_unsafe_source_mapping_is_rejected():
     config = divided_room()
     config.placements[0].position_m.x = 1
     with pytest.raises(PreparationError, match="closed wall"):

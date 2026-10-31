@@ -18,6 +18,7 @@ from app.simulations.models import MetricPoint, SimulationInput
 
 
 def grid_extent(domain, cell_size_m: float, limits: PreparationLimits):
+    limits.check_resolution(cell_size_m)
     polygon = polygon_for(domain)
     left, top, right, bottom = polygon.bounds
     width = (right - left) / cell_size_m
