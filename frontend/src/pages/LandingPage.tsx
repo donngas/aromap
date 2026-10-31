@@ -5,7 +5,8 @@ import { ScentLines, type PearlSprite } from '../components/ScentLines.tsx'
 import './LandingPage.css'
 
 interface LandingPageProps {
-  onStart: () => void
+  /** Returns to the home page; this page is the service introduction. */
+  onBack: () => void
 }
 
 /**
@@ -20,7 +21,7 @@ const SPHERE_SPRITE: PearlSprite = { src: logoSphere, widthRatio: 41 / 360, cent
 
 // Placeholder copy until the service description is finalized; the headline
 // and tagline come from the logo sheet.
-export function LandingPage({ onStart }: LandingPageProps) {
+export function LandingPage({ onBack }: LandingPageProps) {
   const mark = useRef<HTMLImageElement>(null)
   const ctaSection = useRef<HTMLElement>(null)
   const startButton = useRef<HTMLButtonElement>(null)
@@ -78,9 +79,9 @@ export function LandingPage({ onStart }: LandingPageProps) {
       </section>
 
       <section ref={ctaSection} className="landing__cta">
-        <p>바로 시작해보세요.</p>
-        <button ref={startButton} type="button" className="landing__start" onClick={onStart}>
-          시작하기
+        <p>AROMAP</p>
+        <button ref={startButton} type="button" className="landing__start" onClick={onBack}>
+          돌아가기
         </button>
       </section>
     </div>

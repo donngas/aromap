@@ -33,6 +33,12 @@ export interface ScaleCalibration {
   distance_m: number
 }
 
+/** Recognition's estimate of the indoor footprint; closing edges are implicit. */
+export interface IndoorDomain {
+  boundary: PixelPoint[]
+  holes: PixelPoint[][]
+}
+
 export interface Layout {
   id: string
   revision: number
@@ -43,6 +49,8 @@ export interface Layout {
   windows: Opening[]
   room_labels: RoomLabel[]
   calibration: ScaleCalibration | null
+  /** Null when recognition could not close the outer walls; absent in projects saved before it existed. */
+  indoor_domain?: IndoorDomain | null
 }
 
 export interface RecognitionDraft {
