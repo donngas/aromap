@@ -1,0 +1,234 @@
+.landing {
+  /* Outside the palette: the start button's "charged" state needs a clear green. */
+  --scent-green: #3f5e43;
+  /* Serif display matching the logo's wordmark; Korean headings use a serif too. */
+  --font-wordmark: 'Cormorant Garamond', 'Times New Roman', serif;
+  --font-display-ko: 'Noto Serif KR', 'Apple SD Gothic Neo', serif;
+  --font-body: 'IBM Plex Sans KR', system-ui, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+
+  position: relative;
+  font-family: var(--font-body);
+  font-weight: 300;
+  color: var(--text);
+  background: var(--bg);
+}
+
+.scent-lines {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 0;
+  /* Same timing as .landing__mark: the canvas draws the logo's sphere. */
+  animation: fade-in 1.6s ease-out both;
+}
+
+.landing section {
+  position: relative;
+  z-index: 1;
+}
+
+/* Hero */
+
+.landing__hero {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  min-height: 100vh;
+  min-height: 100svh;
+  padding: 0 16px;
+  text-align: center;
+}
+
+/* The hero repeats the logo lockup: mark, wordmark, tagline. */
+.landing__mark {
+  width: clamp(220px, 26vw, 340px);
+  height: auto;
+  /* Opacity only: the scent ribbon reads the mark's position, so no transforms. */
+  animation: fade-in 1.6s ease-out both;
+}
+
+.landing__wordmark {
+  margin: 0.4rem 0 0;
+  /* Trailing letter-spacing is balanced by an equal left padding. */
+  padding-left: 0.14em;
+  font-family: var(--font-wordmark);
+  font-size: clamp(3rem, 8.5vw, 6.5rem);
+  font-weight: 400;
+  line-height: 1;
+  letter-spacing: 0.14em;
+  animation: wordmark-in 1.8s 0.2s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.landing__tagline {
+  margin: 1.4rem 0 0;
+  padding-left: 0.5em;
+  font-size: clamp(0.7rem, 1.1vw, 0.82rem);
+  font-weight: 300;
+  letter-spacing: 0.5em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  animation: fade-in 1.4s 0.7s ease-out both;
+}
+
+@keyframes wordmark-in {
+  from {
+    opacity: 0;
+    letter-spacing: 0.3em;
+    padding-left: 0.3em;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* About: the left two fifths stay empty for the scent lines. */
+
+.landing__about {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  min-height: 170vh;
+  padding: 22vh 6vw 18vh;
+}
+
+.landing__about-body {
+  grid-column: 2;
+  max-width: 34rem;
+}
+
+.landing__about h2 {
+  margin: 0 0 1.75rem;
+  font-family: var(--font-display-ko);
+  font-size: clamp(1.5rem, 2.6vw, 2.1rem);
+  font-weight: 300;
+  line-height: 1.55;
+}
+
+.landing__about p {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.85;
+  color: var(--text-muted);
+}
+
+.landing__steps {
+  counter-reset: step;
+  margin: 5rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.landing__steps li {
+  counter-increment: step;
+  display: grid;
+  grid-template-columns: 3rem 1fr;
+  row-gap: 0.4rem;
+  margin-bottom: 3.25rem;
+}
+
+.landing__steps li::before {
+  content: counter(step);
+  grid-row: span 2;
+  font-family: var(--font-wordmark);
+  font-size: 1.6rem;
+  font-weight: 300;
+  /* Cormorant's old-style 1 reads like a Roman numeral. */
+  font-variant-numeric: lining-nums;
+  line-height: 1.1;
+  color: var(--text-muted);
+}
+
+.landing__steps h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.landing__about .landing__caveat {
+  margin-top: 4rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.875rem;
+}
+
+/* Call to action */
+
+.landing__cta {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 3.5rem;
+  /* Taller than the viewport so there is scroll left to absorb the threads. */
+  min-height: 150vh;
+  padding: 0 16px;
+  text-align: center;
+}
+
+.landing__cta p {
+  margin: 0;
+  font-size: 1.05rem;
+  color: var(--text-muted);
+}
+
+/* --absorb (0-1) is set by ScentLines as the threads flow into the button;
+   the green fill grows from the left edge where they enter. */
+.landing__start {
+  --absorb: 0;
+  padding: 1rem 3.4rem;
+  font-family: var(--font-body);
+  font-size: 1rem;
+  font-weight: 400;
+  letter-spacing: 0.2em;
+  color: var(--text);
+  background: linear-gradient(
+    to right,
+    var(--scent-green) calc(var(--absorb) * 100%),
+    transparent calc(var(--absorb) * 100%)
+  );
+  border: 1px solid color-mix(in srgb, var(--scent-green) calc(var(--absorb) * 100%), var(--accent));
+  border-radius: 999px;
+  transition: color 0.3s ease;
+}
+
+.landing__start.is-charged {
+  color: var(--on-accent);
+}
+
+.landing__start:hover:not(:disabled) {
+  color: var(--on-accent);
+  background: var(--scent-green);
+  border-color: var(--scent-green);
+}
+
+.landing__start:focus-visible {
+  outline-offset: 4px;
+}
+
+@media (max-width: 760px) {
+  .landing__about {
+    grid-template-columns: 1fr;
+    padding: 16vh 24px 12vh;
+  }
+
+  .landing__about-body {
+    grid-column: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing__mark,
+  .landing__wordmark,
+  .landing__tagline,
+  .scent-lines {
+    animation: none;
+  }
+
+  .landing__start {
+    transition: none;
+  }
+}

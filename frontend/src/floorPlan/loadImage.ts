@@ -4,7 +4,7 @@ export const ACCEPTED_PLAN_TYPES = ['image/png', 'image/jpeg', 'image/webp']
 export interface PlanImage {
   /** Original upload, kept for sending to the backend. */
   file: File
-  /** Object URL backing `image`; release with releasePlanImage. */
+  /** Object URL backing `image`; kept for the whole session since the plan is never replaced. */
   url: string
   image: HTMLImageElement
   width: number
@@ -25,8 +25,4 @@ export async function loadPlanImage(file: File): Promise<PlanImage> {
     throw new Error('이미지를 읽을 수 없어요.')
   }
   return { file, url, image, width: image.naturalWidth, height: image.naturalHeight }
-}
-
-export function releasePlanImage(plan: PlanImage): void {
-  URL.revokeObjectURL(plan.url)
 }
