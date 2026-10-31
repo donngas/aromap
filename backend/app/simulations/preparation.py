@@ -158,7 +158,7 @@ def prepare_run(
     configuration: SimulationConfiguration, *, initial_state: ResolvedInitialState | None = None,
     execution_limits: ExecutionLimits | None = None, **resolution_options,
 ) -> PreparedSimulation:
-    """Compile for a future solver; optional state must already be reconciled.
+    """Compile for the numerical solver; optional state must already be reconciled.
 
     No state migration, time stepping, hard worker timeout, or job execution here.
     """

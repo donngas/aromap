@@ -1,0 +1,92 @@
+{
+  "geometry_m": {
+    "indoor_domain": {
+      "boundary": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 10,
+          "y": 0
+        },
+        {
+          "x": 10,
+          "y": 6
+        },
+        {
+          "x": 0,
+          "y": 6
+        }
+      ]
+    },
+    "walls": [
+      {
+        "id": "divider",
+        "start": {
+          "x": 5,
+          "y": 0
+        },
+        "end": {
+          "x": 5,
+          "y": 6
+        }
+      }
+    ],
+    "doors": [
+      {
+        "id": "door",
+        "wall_id": "divider",
+        "start": {
+          "x": 5,
+          "y": 2.5
+        },
+        "end": {
+          "x": 5,
+          "y": 3.5
+        }
+      }
+    ]
+  },
+  "diffuser_definitions": [
+    {
+      "id": "reed",
+      "name": "200 mL / 60 day reed refill",
+      "diffuser_type": "reed",
+      "capacity": 200,
+      "capacity_unit": "ml",
+      "lifetime_days": 60,
+      "provenance": "example"
+    }
+  ],
+  "placements": [
+    {
+      "placement_id": "A1",
+      "definition_id": "reed",
+      "position_m": {
+        "x": 2.125,
+        "y": 3.125
+      },
+      "strength_override": 0.5
+    },
+    {
+      "placement_id": "A2",
+      "definition_id": "reed",
+      "position_m": {
+        "x": 7.875,
+        "y": 2.875
+      },
+      "strength_override": 0.5
+    }
+  ],
+  "opening_states": [
+    {
+      "opening_id": "door",
+      "is_open": true
+    }
+  ],
+  "settings": {
+    "duration_s": 3600,
+    "sample_interval_s": 30
+  }
+}

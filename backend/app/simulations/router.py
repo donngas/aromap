@@ -1,4 +1,4 @@
-"""Contract endpoints; no solver, fake jobs, or fabricated fields are installed."""
+"""Contract endpoints; the standalone solver is not wired to jobs/downloads yet."""
 
 from fastapi import APIRouter
 from fastapi.responses import Response

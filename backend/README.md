@@ -351,7 +351,7 @@ backend input, not the current editor state.
 The placeholder endpoints do not execute, store snapshots, create queued work, or
 serve fake fields. No simulation DB schema/worker is installed in this change.
 
-## Simulation preparation (implemented; solver pending)
+## Simulation preparation and numerical engine
 
 The standalone entry points in `app/simulations/preparation.py` are:
 
@@ -366,11 +366,11 @@ The caller supplies a model version. The default source resolver is
 `resolve_source(definition, placement) -> ResolvedEmissionProfile`. It handles
 strength/rated-hour overrides and records assumptions. Provisional spreading and
 removal defaults resolve below; request values override caller defaults. There is
-no operating schedule or numerical solver yet.
+no operating schedule yet. The standalone solver is described below.
 
 Interval-based sampling includes zero and the duration, appending a final partial
 interval when needed; explicit sample timestamps are preserved. Numerical solver
-time steps remain a separate future decision. The fingerprint covers resolved
+time steps are selected independently from exported snapshots. The fingerprint covers resolved
 input and versions, not client request IDs. FE input models are copied, so later
 editor/caller mutations do not alter the prepared snapshot.
 
@@ -400,8 +400,8 @@ across barriers. Disabled emitters are excluded; zero-start source/channel order
 follows request order. Resolved initial state may retain additional residual
 channels in its explicit order. `PreparedGrid.expand()` maps
 compact active-cell values back to rectangular arrays with zero outside the mask.
-Arrays prepared for the solver are read-only. No particle transport or flux/time
-calculation has been implemented.
+Arrays prepared for the solver are read-only. The solver exchanges concentration
+only across the prepared connections.
 
 The 25 cm default is adjustable through the request or preparation caller. Warn on
 unrepresented/narrow doors, thin footprint regions, and center-classified area
@@ -416,7 +416,7 @@ these are grid approximations, not a fitted mesh.
 exceed the sample cap, automatic sampling uses evenly spaced times within the cap,
 including zero and the final time. Omitted sampling stays automatic through JSON
 round trips. Explicit intervals/timestamps are preserved and rejected if over the
-cap; they are never silently coarsened. Sampling is independent of the future
+cap; they are never silently coarsened. Sampling is independent of the
 solver time step. Sampled `EngineOutput`
 concentrations must use float32, be finite/nonnegative, and be zero outside the
 active domain. Output timestamps must be nonempty, finite, nonnegative, and strictly
@@ -427,8 +427,8 @@ concentration plus a boolean mask, not sparse-solver working memory or file over
 Duration/resolution/output checks precede source resolution and grid allocation.
 `ExecutionLimits` sets a provisional 120-second runtime budget and 512 MiB working
 memory budget. Preparation checks an array working-set estimate before building
-the grid; a future solver must account for its additional sparse/native allocations
-and call deadline checks. Invalid, non-finite, negative, or over-budget memory
+the grid; the solver adds sparse-factorization working-set estimates and checks
+deadlines between numerical operations. Invalid, non-finite, negative, or over-budget memory
 estimates are rejected. These are guards, not an OS memory cap or hard process
 timeout. Hard worker timeout enforcement remains part of job integration.
 
@@ -446,10 +446,128 @@ fresh-air exchange. Door width affects represented connections, without a second
 width multiplier. Window size alone cannot determine ventilation: pressure, wind,
 and thermal driving forces also matter ([NIST CONTAM documentation](https://www.nist.gov/publications/contam-user-guide-and-program-documentation-version-34)).
 
-`EngineOutput` defines the future `[T,P,H,W]` array boundary and diagnostics; there
-is no solver callable yet. Job execution, artifact encoding, and endpoint activation
-will follow the numerical implementation. Existing simulation endpoints still return
-their documented unavailable/not-found responses.
+`EngineOutput` returns `[T,P,H,W]` fields, channel identities, numerical diagnostics,
+and an internal compact `final_state`. Job execution, artifact encoding, and endpoint
+activation remain separate work. Simulation endpoints still return their documented
+unavailable/not-found responses.
+
+### Cell balance and solver (implemented)
+
+For each placement channel and active cell, update concentration by **spreading
+through connected cells + source emission − uniform removal**:
+
+$$
+\frac{C_i^{new}-C_i^{old}}{\Delta t}
+= \frac{D}{h^2}\sum_{j\text{ connected to }i}(C_j^{new}-C_i^{new})
++ \frac{q_i}{h^2} - k C_i^{new}.
+$$
+
+Here `C` is relative concentration per m², `h` is cell side length in meters,
+`D` is effective spreading in m²/s, `q_i` is the source rate assigned to that cell
+in relative units/s, and `k` is removal per second. Dividing emission by cell area
+preserves the emitted quantity when resolution changes. Each connection transfers
+equal/opposite quantities; missing connections implement impermeable boundaries.
+No outside zero-concentration neighbors are added. Cell values represent averages
+over the full active square cell, stored at its center; boundary geometry remains
+the existing grid approximation.
+
+This is a square-cell adaptation of [NIST's finite-volume discretization](https://pages.nist.gov/fipy/en/stable/numerical/discret.html):
+neighbor concentration differences approximate diffusive exchange, and no-flux
+boundaries prevent leakage. Using new-time values gives implicit backward Euler.
+`engine/solver.py:simulate(prepared, options=None)` assembles a sparse transport
+matrix and uses [SciPy SuperLU](https://docs.scipy.org/doc/scipy/reference/generated/scipy.sparse.linalg.splu.html).
+One factorization is reused for all steps and placement channels, including residual
+channels with no active emission. Float64 working states become float32 snapshots;
+non-finite values, material negatives, and float32 overflow fail explicitly. Tiny
+negative roundoff is clipped to zero and its added quantity is recorded.
+
+The simulation timeline is authoritative. Backend-only `SolverOptions` defaults
+to a maximum 0.25-second step, additionally capped by `0.25*h²/D` and `0.05/k` (no
+removal cap when `k=0`). These are provisional accuracy controls, not stability
+requirements or scientific constants. The duration is divided into equal steps
+no larger than that cap, reaching the exact end with one reusable matrix. Runs
+requiring more than 200,000 steps are rejected before factorization.
+
+Requested heatmap times do not alter integration: snapshots between computed
+states use linear interpolation. The engine always advances the full duration,
+even if the last requested snapshot is earlier. `final_state` contains the compact
+float64 end state and cumulative elapsed time; it can feed a later internal run.
+Checkpoint APIs, state migration, and operating schedules are still unimplemented.
+Diagnostics record solver version and the resolved step/count for reproducibility;
+future result caching/versioning must include the numerical policy as well as the
+prepared input fingerprint.
+
+Memory guards reserve room for arrays and estimated sparse LU fill before solving,
+then check actual factor storage. Native library allocation/work cannot be forcibly
+interrupted inside this synchronous function; process-level timeout and memory
+isolation remain necessary when wiring job execution. This is not a hard RSS cap.
+
+Tests cover conservation, source accumulation, decay, walls/doors/holes, per-placement
+superposition and residuals, spatial/time refinement, and independence from snapshot
+schedule. These validate the numerical model, not real-world scent perception.
+An early-time check on a small point-source layout compared the default 0.25-second
+step with a 0.015625-second reference: the relative field L1 difference at one second
+was about 3%. The former 2-second candidate gave about 29% and was rejected. This
+is a convergence check on that layout, not a universal accuracy guarantee.
+
+Repeatable Linux smoke benchmarks, from `backend/`:
+
+```sh
+uv run --locked python -m scripts.benchmark_simulation --case apartment
+# Other cases: comparison, large. Run separately for per-process peak RSS.
+```
+
+Representative development-machine checks with 25 cm cells and 30-second snapshots:
+
+| Case | Active cells / channels | Simulated duration | Solver wall time | Process peak RSS |
+| --- | --- | --- | --- | --- |
+| Apartment | 4,800 / 4 | 1 hour | ~7.4 s | ~94 MiB |
+| Placement comparison | 10,000 / 16 | 10 minutes | ~15.4 s | ~118 MiB |
+| Large footprint | 99,856 / 1 | 1 minute | ~3.2 s | ~351 MiB |
+
+These are synthetic rectangular-layout checks, not performance guarantees. Peak
+RSS includes Python/native libraries; long, dense, many-channel combinations may
+hit runtime/memory budgets even when individual preparation limits pass.
+
+Future presets can choose separate spreading and removal parameters. Temperature
+corrections remain 1 until supported product data exists; directional airflow will
+add a separate transport operator. The general sparse LU solve supports asymmetric
+operators, but no fan/A/C airflow field or advection term is implemented now.
+
+### Standalone visual preview
+
+Generate a portable HTML file directly from a metric configuration, without a
+running API, React, browser uploads, or extra Python dependencies. From `backend/`:
+
+```sh
+uv run --locked python -m scripts.preview_simulation \
+  --input tests/fixtures/layouts/open_door.json \
+  --output .data/previews/open_door.html --scale-max 8
+```
+
+Open the generated HTML in a browser. It embeds its own geometry, float32 snapshots,
+and active mask, with no external scripts, fonts, network calls, or adjacent-file
+fetches. Play/pause, scrub time, select a placement or combined concentration, inspect
+cell values, and toggle grid/log density. A plain background, soft single-hue haze,
+and fine seeded speckles represent concentration; the marks are not particle
+trajectories. Display interpolation uses only connected neighbors, preserving
+closed walls and excluded regions. Numeric values remain untransformed. Display
+limits remain fixed across time and channels; use the same `--scale-max` and log
+setting across files for fair comparisons. Saturated density retains true values in
+the numeric inspector. The viewer is a development aid, not the production field
+encoding or a second editor.
+
+Input accepts `SimulationConfiguration` or the request shape with `client_request_id`.
+The JSON input cap is 2 MiB and the default raw-field/display-neighbor cap is 32 MiB, checked before
+simulation. Base64 makes the HTML larger; `--max-preview-mib` explicitly changes
+the preview cap, subject to normal engine limits. `--max-step-s` changes numerical
+accuracy, while input sampling fields control exported snapshots. Generated files
+under `.data/` are gitignored; source fixtures are in `tests/fixtures/layouts/`.
+
+The closed/open doorway examples use identical sources. The split-placement example
+uses two half-strength sources to preserve total emission; the courtyard example
+exercises an L-shaped domain and an excluded hole. Each runs for one hour with
+25 cm cells and 30-second snapshots.
 
 ### Emission policy (implemented) and future research candidates
 
@@ -505,8 +623,8 @@ finite nonnegative values, matching grid topology/model version, unique channel
 identities, and inclusion of all current emitting sources. It copies input values
 into a read-only snapshot; the initial-state digest participates in the run input
 fingerprint. `PreparedSimulation.channels` and explicit `EngineOutput.channels`
-can include residual channels with no current emitter. A future solver must use
-these identities instead of assuming channel count equals emitter count.
+can include residual channels with no current emitter. The solver uses these
+identities instead of assuming channel count equals emitter count.
 `initial_concentrations` returns a fresh writable float64 solver array.
 No initial-state HTTP field, checkpoint endpoint, or migration is implemented.
 
@@ -558,7 +676,7 @@ A successful browser save must not depend on any of these temporary resources.
 | `floor_plans` | Image endpoints, preparation, recognition orchestration | `UploadedImage`, recognition DTOs, `RecognitionDraft`, `Layout`, `PixelIndoorDomain` |
 | `floor_plans/recognition` | Image-to-editable-geometry implementation | Existing `Path → RecognitionDraft` boundary |
 | `diffusers` | Raw consumer product specifications | `ConsumerDiffuserDefinition` |
-| `simulations` | Metric contracts, resolved inputs, grid preparation; future solver | `SimulationRequest`, `SimulationInput`, `PreparedGrid`, `EngineOutput`, `SimulationResult` |
+| `simulations` | Metric contracts, emission resolution, grid preparation, numerical solver | `SimulationRequest`, `SimulationInput`, `PreparedGrid`, `EngineOutput`, `SimulationResult` |
 | `advice` | Future on-demand interpretation | `AdviceRequest.configuration`, `AdviceResponse` |
 | `infrastructure` | Local storage, SQLite, job execution, upload-body limit | Operational resources, not project ownership |
 
@@ -658,8 +776,8 @@ The endpoint still returns `calibration: null`; actual calibration is frontend-o
 
 1. **Recognition integration:** wire the provider into the existing job flow and
    implement the estimated indoor domain; verify pixel geometry against prepared images.
-2. **Engine prototype:** start independently with predefined metric layouts and
-   sources. Choose the numerical approach and validate boundaries and behavior.
+2. **Engine refinement:** benchmark and extend the standalone sparse backward-Euler
+   implementation using predefined layouts and convergence/physical-balance checks.
 3. **Preparation refinement:** benchmark the implemented consumption resolver,
    provisional defaults, resource guards, and initial-state boundary alongside the
    prototype; agree with FE on artifact encoding.
@@ -668,8 +786,8 @@ The endpoint still returns `calibration: null`; actual calibration is frontend-o
 5. **Advice and reliability:** add on-demand interpretation, execution limits,
    recovery improvements, and representative end-to-end checks.
 
-Recognition can progress alongside engine work. Numerical integration, supported
-environmental corrections, and final delivery DTO details remain design work. Browser
+Recognition can progress alongside engine work. Further numerical calibration,
+supported environmental corrections, and final delivery DTO details remain design work. Browser
 persistence/export stays frontend-owned; no backend project storage is planned.
 
 ## Coordinates and future simulation flow
@@ -722,8 +840,8 @@ behavior is still undecided. Metric/grid preparation is implemented independentl
 the solver and HTTP execution path remain pending.
 
 The HTTP contract now describes grid alignment, channel/time/array ordering,
-relative units, and request correlation; actual field encoding and numerical
-integration remain to be agreed with the engine prototype. Advice accepts explicit configuration
+relative units, and request correlation; actual field encoding and queued delivery
+remain follow-up work. Advice accepts explicit configuration
 context, not the browser's project document.
 
 Results will represent approximate relative concentrations under stated assumptions,

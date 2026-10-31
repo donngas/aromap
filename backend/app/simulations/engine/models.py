@@ -83,7 +83,7 @@ class ResolvedInitialState:
 
 @dataclass(frozen=True)
 class EngineOutput:
-    """Future solver output: float32 concentration[T,P,H,W], no URLs/job IDs.
+    """Solver output: float32 concentration[T,P,H,W], no URLs/job IDs.
 
     Values must be finite and nonnegative, with zero outside the active mask.
     Any numerical roundoff correction belongs to the solver before publication.
@@ -94,6 +94,7 @@ class EngineOutput:
     concentration: NDArray[np.float32]
     diagnostics: tuple[str, ...] = ()
     channels: tuple[StateChannel, ...] | None = None
+    final_state: ResolvedInitialState | None = None
 
     def __post_init__(self):
         if not isinstance(self.concentration, np.ndarray) or self.concentration.dtype != np.dtype(np.float32):
