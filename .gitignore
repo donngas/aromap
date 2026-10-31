@@ -1,0 +1,38 @@
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python / uv
+__pycache__/
+*.py[cod]
+.venv/
+.python-version
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# JavaScript / frontend
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+.vite/
+
+# Local runtime data and generated simulation output
+uploads/
+simulation_outputs/
+*.log
+
+# Editor / OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
