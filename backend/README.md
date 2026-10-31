@@ -5,6 +5,21 @@ local persistence, save-format versions, and JSON export/import. There is no bac
 `ProjectDocument` or project CRUD API. SQLite tracks temporary uploads and jobs;
 images and recognition results live on the same local volume.
 
+## Browser data ownership (planning direction)
+
+The frontend should persist editable work and prepared image Blobs locally
+(IndexedDB is the suggested store), separately from temporary backend image/job
+handles and cached results. Pixel geometry and user-entered calibration remain
+the editing source of truth; FE can derive metric geometry when submitting work.
+Exports should remain usable after backend resources expire.
+
+Each operation receives only its relevant context: recognition uses an uploaded
+image ID; future simulation/advice requests carry the selected configuration and
+any needed result context, rather than the entire saved project. FE should associate
+results with submitted snapshots to avoid applying stale results after edits.
+Exact save structures, request correlation, and simulation/advice DTOs remain to
+be agreed as the engine becomes concrete; existing simulation models are drafts.
+
 ## Run
 
 From `backend/`:
@@ -195,7 +210,8 @@ not an HTTP 500. The example above illustrates the schema, not actual recognitio
 
 Frontend associates a job with its submitted image, attaches the locally retained
 reference image to returned geometry, and asks before replacing existing edits.
-Recognition does not return opening states or calibration. Upload/job IDs stay in
+Recognition does not infer opening states or calibration; the endpoint returns
+`calibration: null` in the existing layout schema. Upload/job IDs stay in
 runtime state, outside portable frontend saves.
 
 ### Errors
@@ -292,13 +308,36 @@ The executor checks basic output structure, dimensions, revision, and unset
 calibration/reference image. Full geometry/topology validation remains follow-up
 work; the model declarations do not enforce it yet.
 
+The handed-off `floor_plans` definitions remain unchanged. The recognition endpoint
+returns `calibration: null`; actual calibration remains frontend-owned.
+
+## Backend roadmap
+
+1. **Recognition integration:** wire the provider into the existing job flow and
+   verify returned geometry against prepared images.
+2. **Engine prototype:** start independently with predefined metric layouts and
+   sources. Choose the numerical approach and validate boundaries and behavior.
+3. **Contracts and preparation:** refine simulation inputs/outputs after the
+   prototype; accept FE-calibrated metric geometry, resolve source assumptions,
+   validate inputs, and agree with FE on result alignment/playback metadata.
+4. **Simulation delivery:** add queued execution, sampled-field artifacts, result
+   retrieval, and correlation with submitted configurations.
+5. **Advice and reliability:** add on-demand interpretation, execution limits,
+   recovery improvements, and representative end-to-end checks.
+
+Recognition can progress alongside engine work. Detailed physical assumptions,
+consumer-spec emission conversion, and final DTOs remain design work. Browser
+persistence/export stays frontend-owned; no backend project storage is planned.
+
 ## Coordinates and future simulation flow
 
 `PixelPoint` is used for editable geometry, calibration endpoints, and placements.
 `MetricPoint` is used for resolved solver geometry and sources. Both serialize as
 `{ "x": ..., "y": ... }`; containing schemas define their units.
 
-Preparation will reject absent/zero-length calibration and convert uniformly:
+The current planning direction is FE-owned calibration and pixel-to-meter
+conversion before submission, rather than requiring a backend scaling operation.
+The uniform conversion is:
 
 ```text
 meters_per_pixel = distance_m / hypot(end.x - start.x, end.y - start.y)
@@ -306,8 +345,10 @@ x_m = x_px * meters_per_pixel
 y_m = y_px * meters_per_pixel
 ```
 
-Apply scale to all geometry, positions, and layout dimensions before invoking the
-engine. Metric coordinates retain the same axis directions. Grid cell size is in
+FE should reject absent/zero-length calibration and apply scale to all geometry,
+positions, and layout dimensions before submission. Backend still validates metric
+inputs and prepares the numerical grid. Metric coordinates retain the same axis
+directions. Grid cell size is in
 meters and independent of image resolution. Display zoom/pan changes no stored
 geometry; resampling the underlying image must transform calibration/geometry too.
 Perspective images require rectification before a uniform scale is meaningful.
@@ -326,8 +367,8 @@ flowchart TD
     Result --> Playback["Browser: heatmap and playback"]
 ```
 
-Future simulation requests carry a layout/calibration, definitions, placements,
-opening states, conditions, and settings for one configuration. They omit image
+Future simulation requests are expected to carry metric geometry, definitions,
+placements, opening states, conditions, and settings for one configuration. They omit image
 bytes and inactive scenarios. Preparation validates references, resolves omitted
 opening states to closed, and records explicit assumptions in a detached input.
 Open doors connect spaces; windows are recognized now but open-window physical
