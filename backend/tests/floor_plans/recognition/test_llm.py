@@ -12,7 +12,7 @@ from app.floor_plans.recognition.interface import RecognitionError
 
 def extraction(**changes):
     value = dict(walls=[{"start": {"x": 0, "y": 4}, "end": {"x": 12, "y": 4}}],
-                 openings=[{"wall_index": 0, "kind": "door", "start": {"x": 1, "y": 4},
+                 openings=[{"kind": "door", "start": {"x": 1, "y": 4},
                             "end": {"x": 3, "y": 4}}], room_labels=[], indoor_domain=None, warnings=[])
     value.update(changes)
     return llm.Extraction.model_validate(value)
@@ -72,7 +72,7 @@ def test_nodes_crossings_and_preserves_opening_reference():
     assert any("junction" in warning for warning in draft.warnings)
 
 
-@pytest.mark.parametrize("mutation", ["bounds", "nan", "zero", "reference", "off_wall", "polygon"])
+@pytest.mark.parametrize("mutation", ["bounds", "nan", "zero", "polygon"])
 def test_invalid_geometry_rejected(mutation):
     value = extraction()
     if mutation == "bounds":
@@ -81,10 +81,6 @@ def test_invalid_geometry_rejected(mutation):
         value.walls[0].start.x = float("nan")
     elif mutation == "zero":
         value.walls[0].end = value.walls[0].start
-    elif mutation == "reference":
-        value.openings[0].wall_index = 2
-    elif mutation == "off_wall":
-        value.openings[0].start.y = 0
     else:
         value.indoor_domain = llm.IndoorDomain(boundary=[llm.ImagePoint(x=0, y=0),
             llm.ImagePoint(x=4, y=4), llm.ImagePoint(x=0, y=4), llm.ImagePoint(x=4, y=0)], holes=[])
@@ -167,3 +163,69 @@ def test_near_missed_junction_warning_is_bounded(gap, expected_warning):
     assert len(draft.floor_plan.layout.doors) == 1
     if gap:
         assert any(w.start.y == 4 + gap for w in draft.floor_plan.layout.walls)
+
+
+
+def test_assigns_opening_parent_by_geometry():
+    value = extraction()
+    draft = llm.to_draft(value, 12, 8)
+    layout = draft.floor_plan.layout
+    assert layout.doors[0].wall_id == layout.walls[0].id
+
+
+def test_bridges_only_supported_detected_aperture():
+    value = extraction(walls=[
+        {"start": {"x": 0, "y": 4}, "end": {"x": 4, "y": 4}},
+        {"start": {"x": 8, "y": 4}, "end": {"x": 12, "y": 4}},
+    ], openings=[{"kind": "door", "start": {"x": 4, "y": 4},
+                  "end": {"x": 8, "y": 4}}])
+    draft = llm.to_draft(value, 12, 8)
+    layout = draft.floor_plan.layout
+    assert len(layout.doors) == 1
+    parent = next(w for w in layout.walls if w.id == layout.doors[0].wall_id)
+    assert parent.start.x <= 4 and parent.end.x >= 8
+    assert any("Bridged" in warning for warning in draft.warnings)
+    # Remove the far jamb evidence: no fabricated extension to empty space.
+    value.walls.pop()
+    draft = llm.to_draft(value, 12, 8)
+    assert not draft.floor_plan.layout.doors
+    assert draft.floor_plan.layout.walls[0].end.x == 4
+    assert any("no supported" in warning for warning in draft.warnings)
+
+
+def test_bad_aperture_does_not_discard_good_geometry():
+    value = extraction()
+    value.openings[0].start.y = 0
+    draft = llm.to_draft(value, 12, 8)
+    assert len(draft.floor_plan.layout.walls) == 1
+    assert not draft.floor_plan.layout.doors
+    assert any("Skipped door" in warning for warning in draft.warnings)
+
+
+def test_repairs_diagonal_aperture_with_support_at_both_jambs():
+    value = extraction(walls=[
+        {"start": {"x": 0, "y": 0}, "end": {"x": 4, "y": 4}},
+        {"start": {"x": 8, "y": 8}, "end": {"x": 12, "y": 12}},
+    ], openings=[{"kind": "window", "start": {"x": 4, "y": 4},
+                  "end": {"x": 8, "y": 8}}])
+    draft = llm.to_draft(value, 12, 12)
+    assert len(draft.floor_plan.layout.windows) == 1
+    window = draft.floor_plan.layout.windows[0]
+    assert window.start.x == window.start.y == 4
+    assert window.end.x == window.end.y == 8
+
+
+def test_ambiguous_parallel_parent_is_not_assigned():
+    value = extraction()
+    value.walls.append(llm.Segment(start=llm.ImagePoint(x=0, y=5),
+                                  end=llm.ImagePoint(x=12, y=5)))
+    draft = llm.to_draft(value, 12, 8)
+    assert not draft.floor_plan.layout.doors
+    assert any("ambiguous parent" in warning for warning in draft.warnings)
+
+
+def test_opening_rounding_projects_to_parent_centerline():
+    value = extraction()
+    value.openings[0].start.y = value.openings[0].end.y = 6
+    layout = llm.to_draft(value, 12, 8).floor_plan.layout
+    assert layout.doors[0].start.y == layout.doors[0].end.y == 4
