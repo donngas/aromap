@@ -22,6 +22,7 @@ class RecognitionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     image_id: str
+    use_llm: bool = Field(default=False, strict=True, description="Use experimental OpenAI image recognition.")
 
 
 class RecognitionAccepted(BaseModel):

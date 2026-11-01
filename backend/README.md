@@ -988,3 +988,39 @@ geometry can still be ambiguous. An open window too far from a boundary or an
 opening that cannot be mapped to an indoor cell fails preparation. Openings are sampled into indoor
 cells and their widths conserved. No outdoor cells are simulated. Furniture
 resistance and height-dependent flow are not implemented.
+
+## Experimental LLM recognition
+
+The existing OpenCV/configured recognizer remains the default. To opt in per job,
+set `OPENAI_API_KEY` in the repository root `.env` (or export it in the backend
+environment), then submit:
+
+```http
+POST /api/floor-plans/recognitions
+Content-Type: application/json
+
+{"image_id": "<uploaded-image-id>", "use_llm": true}
+```
+
+Compose forwards the key only to the backend. For local uv execution, this optional
+provider loads the root `.env`, then `backend/.env`, without overriding environment
+variables. This does not change how other application settings are loaded.
+Omitting `use_llm` or setting it to `false` uses the current recognizer and needs no
+OpenAI credentials. The frontend does not enable this flag automatically.
+
+The LLM route sends the prepared PNG to the first-party OpenAI Responses API using
+`gpt-6-luna`, `reasoning.effort=none`, and a strict structured extraction schema.
+One request extracts pixel wall centerlines, openings, room labels, and an optional
+indoor polygon. Server code generates IDs, splits wall junctions, validates bounds
+and polygons, and assigns openings to final walls. It preserves the existing
+`RecognitionDraft` result and polling API; calibration remains unset. Openings
+crossing a junction are skipped with a warning. Disconnected wall endpoints within
+one pixel of another wall are flagged for review without moving the geometry. Invalid geometry, refused or
+incomplete output, and provider errors fail the job through the existing
+`recognition_failed` contract; there is no automatic fallback to OpenCV. Server
+logs retain a sanitized failure category (such as authentication, rate limit,
+refusal, timeout, or invalid geometry), without provider bodies or exception text.
+
+SDK retries are disabled, with a 50-second request timeout and the existing
+`AROMAP_RECOGNITION_TIMEOUT_SECONDS` process deadline (default 60 seconds). The API
+request uses `store=false`. Geometry remains experimental and requires user review.
