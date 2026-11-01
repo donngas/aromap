@@ -455,6 +455,65 @@
   color: var(--error);
 }
 
+/* Sample plans on the upload page */
+
+.examples {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.examples__title {
+  margin: 4px 0 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.examples__list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.examples__item {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  width: 100%;
+  padding: 8px 8px 10px;
+  border-radius: 10px;
+  text-align: left;
+  white-space: normal;
+}
+
+.examples__item img {
+  width: 100%;
+  height: 120px;
+  margin-bottom: 4px;
+  object-fit: contain;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.examples__item.is-loading {
+  border-color: var(--accent);
+  opacity: 1;
+}
+
+.examples__name {
+  font-weight: 600;
+}
+
+.examples__note {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 .dropzone {
   display: flex;
   flex-direction: column;
