@@ -345,9 +345,14 @@ export function WorkspacePage({ plan, project, layout, saveStatus, onChange }: W
   }
 
   // A/B comparison: two finished scenarios side by side, read-only, sharing
-  // pan/zoom and playback. Null while editing.
+  // playback. Null while editing. Each side pans and zooms on its own unless
+  // linked; fitKey remounts both viewers to fit them again.
   const [compare, setCompare] = useState<{ a: string; b: string } | null>(null)
-  const [compareView, setCompareView] = useState<PlanView | null>(null)
+  const [paneViews, setPaneViews] = useState<Record<'a' | 'b', PlanView | null>>({ a: null, b: null })
+  const [linkedViews, setLinkedViews] = useState(false)
+  const [fitKey, setFitKey] = useState(0)
+  /** Side panned or zoomed last; linking copies its view to the other. */
+  const lastPaneRef = useRef<'a' | 'b'>('a')
   const runA = compare ? (runs[compare.a] ?? null) : null
   const runB = compare ? (runs[compare.b] ?? null) : null
   const comparing = compare !== null && runA !== null && runB !== null
@@ -483,14 +488,33 @@ export function WorkspacePage({ plan, project, layout, saveStatus, onChange }: W
     goToFrame(0)
     setPlaying(true)
     setShowResult(true)
-    setCompareView(null)
+    setPaneViews({ a: null, b: null })
+    setLinkedViews(false)
     setCompare({ a, b })
   }
   const stopCompare = () => {
     setPlaying(false)
     goToFrame(0)
     setCompare(null)
-    setCompareView(null)
+    setPaneViews({ a: null, b: null })
+  }
+  const changePaneView = (side: 'a' | 'b', view: PlanView) => {
+    lastPaneRef.current = side
+    setPaneViews((v) => (linkedViews ? { a: view, b: view } : { ...v, [side]: view }))
+  }
+  const linkViews = (linked: boolean) => {
+    setLinkedViews(linked)
+    if (linked) {
+      setPaneViews((v) => {
+        const view = v[lastPaneRef.current] ?? v.a ?? v.b
+        return view ? { a: view, b: view } : v
+      })
+    }
+  }
+  /** Both sides back to the whole plan. */
+  const fitPanes = () => {
+    setPaneViews({ a: null, b: null })
+    setFitKey((k) => k + 1)
   }
   /** Picking the scenario already on the other side swaps the two. */
   const changeCompare = (side: 'a' | 'b', id: string) =>
@@ -509,11 +533,12 @@ export function WorkspacePage({ plan, project, layout, saveStatus, onChange }: W
   return (
     <div ref={wsRef} className="ws">
       {sides ? (
-        // Comparison: read-only plans side by side, panning and zooming together.
+        // Comparison: read-only plans side by side, each zoomed on its own unless linked.
         <div className="ws-split">
           {sides.map((s) => (
             <div key={s.side} className="ws-split__pane">
               <PlanViewer
+                key={fitKey}
                 image={plan.image}
                 layout={layout}
                 imageOpacity={0.45}
@@ -526,8 +551,8 @@ export function WorkspacePage({ plan, project, layout, saveStatus, onChange }: W
                 openOpeningIds={s.openOpeningIds}
                 fitInsetTop={headerHeight}
                 fitButton={false}
-                view={compareView}
-                onViewChange={setCompareView}
+                view={paneViews[s.side]}
+                onViewChange={(view) => changePaneView(s.side, view)}
               />
               <p className="ws-split__label">
                 <span className={`ws-ab__badge ws-ab__badge--${s.side}`}>{s.side.toUpperCase()}</span>
@@ -816,6 +841,9 @@ export function WorkspacePage({ plan, project, layout, saveStatus, onChange }: W
           onStartCompare={startCompare}
           onStopCompare={stopCompare}
           onCompareChange={changeCompare}
+          linkedViews={linkedViews}
+          onLinkedViewsChange={linkViews}
+          onFitViews={fitPanes}
         />
       </FloatingWindow>
 
