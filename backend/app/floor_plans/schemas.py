@@ -1,7 +1,7 @@
 """Frontend-facing upload and recognition DTOs; no project persistence."""
 
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -22,7 +22,9 @@ class RecognitionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     image_id: str
-    use_llm: bool = Field(default=False, strict=True, description="Use experimental OpenAI image recognition.")
+    use_llm: Annotated[bool, Field(strict=True)] | Literal["hybrid"] = Field(
+        default=False, description="false: configured recognizer; true: LLM only; hybrid: OpenCV plus LLM review.",
+    )
 
 
 class RecognitionAccepted(BaseModel):

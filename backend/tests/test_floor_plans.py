@@ -278,7 +278,7 @@ def test_cors_and_openapi(tmp_path):
         assert "meters" in schema["components"]["schemas"]["MetricPoint"]["properties"]["x"]["description"]
 
 
-@pytest.mark.parametrize("flag", [None, False, True])
+@pytest.mark.parametrize("flag", [None, False, True, "hybrid"])
 def test_optional_llm_routing(tmp_path, monkeypatch, flag):
     from app.infrastructure import jobs
 
@@ -314,11 +314,12 @@ def test_optional_llm_routing(tmp_path, monkeypatch, flag):
         response = client.post("/api/floor-plans/recognitions", json=payload)
         assert response.status_code == 202
         assert wait_terminal(client, response.json()["status_url"])["state"] == "succeeded"
-        expected = "app.floor_plans.recognition.llm:recognize_floor_plan" if flag else settings.recognition_callable
+        expected = ("app.floor_plans.recognition.hybrid:recognize_floor_plan" if flag == "hybrid" else
+                    "app.floor_plans.recognition.llm:recognize_floor_plan" if flag else settings.recognition_callable)
         assert selected == [expected]
         request = tmp_path / "results" / f"{response.json()['job_id']}.request.json"
         import json
-        assert json.loads(request.read_text()) == {"use_llm": bool(flag)}
+        assert json.loads(request.read_text()) == {"use_llm": flag if flag is not None else False}
         assert client.post("/api/floor-plans/recognitions", json={"image_id": image_id, "use_llm": "yes"}).status_code == 422
 
 

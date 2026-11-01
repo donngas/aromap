@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 import multiprocessing
 import time
 from uuid import uuid4
+from typing import Literal
 
 from fastapi import HTTPException
 
@@ -109,7 +110,7 @@ class Jobs:
                 "WHERE state IN ('queued', 'running')", (time.time(),)
             )
 
-    def submit_recognition(self, image_id: str, *, use_llm: bool = False) -> str:
+    def submit_recognition(self, image_id: str, *, use_llm: bool | Literal["hybrid"] = False) -> str:
         if self.queue.full():
             raise api_error(429, "queue_full", "Recognition queue is full; try again later.")
         now = time.time()
@@ -218,8 +219,9 @@ class Jobs:
         path = f"results/{job_id}.json"
         request_path = self.storage.path(f"results/{job_id}.request.json")
         use_llm = json.loads(request_path.read_text())["use_llm"] if request_path.exists() else False
-        target = ("app.floor_plans.recognition.llm:recognize_floor_plan"
-                  if use_llm else self.settings.recognition_callable)
+        target = ("app.floor_plans.recognition.hybrid:recognize_floor_plan" if use_llm == "hybrid" else
+                  "app.floor_plans.recognition.llm:recognize_floor_plan" if use_llm else
+                  self.settings.recognition_callable)
         process = multiprocessing.get_context("spawn").Process(
             target=publish_recognition,
             args=(str(self.storage.root), job_id, target,
