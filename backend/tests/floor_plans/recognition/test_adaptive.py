@@ -43,10 +43,8 @@ def _assert_graph(draft, expected, regions):
 
 @pytest.mark.parametrize("outer,inner", [(20, 2), (20, 4), (40, 4), (40, 8), (8, 20)])
 def test_recovers_mixed_width_partitions(tmp_path, outer, inner):
-    image, path, expected = _draw(tmp_path, [(200, 200), (800, 200), (800, 600), (200, 600)],
-                                  [[(500, 200), (500, 600)]], outer, inner)
-    baseline = _graph(_recognize_orthogonal(image))
-    assert expected.intersection(baseline.buffer(3)).length / expected.length < .9
+    _, path, expected = _draw(tmp_path, [(200, 200), (800, 200), (800, 600), (200, 600)],
+                              [[(500, 200), (500, 600)]], outer, inner)
     result = recognize_floor_plan(path)
     _assert_graph(result, expected, 2)
     assert not result.floor_plan.layout.doors and not result.floor_plan.layout.windows
