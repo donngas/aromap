@@ -19,6 +19,7 @@ PASS_IMAGES = [
     FIXTURES / "ground_floor_plan.png",
     FIXTURES / "porch_house_plan.png",
     FIXTURES / "balcony_home_plan.png",
+    FIXTURES / "gray_ranch_plan.png",
 ]
 # Images in fixtures/local/fail are git-ignored (unclear or unrecorded redistribution
 # rights; see local/SOURCES.md) and recognized poorly. Their tests are skipped when
@@ -38,6 +39,7 @@ NAMED = {
     "ground_floor": FIXTURES / "ground_floor_plan.png",  # CAD-style, corner column markers
     "porch_house": FIXTURES / "porch_house_plan.png",  # half-open doors, dashed passage
     "balcony_home": FIXTURES / "balcony_home_plan.png",  # thin inner walls, light windows
+    "gray_ranch": FIXTURES / "gray_ranch_plan.png",  # gray walls, front double door
     "cad_cafe": LOCAL_FAIL / "cad_cafe_plan.png",  # CAD drawing
     "colored_home": FIXTURES / "colored_home_plan.png",  # colored, dimensioned
     "warehouse": LOCAL_FAIL / "warehouse_plan.png",  # gray solid walls
@@ -428,6 +430,32 @@ def test_balcony_home_counts_and_outline(drafts) -> None:
     assert (len(layout.doors), len(layout.windows)) == (11, 14)
     # The bay is inside; the balcony, porch, and patio are outside.
     assert layout.indoor_domain is not None and len(layout.indoor_domain.boundary) == 12
+    assert not draft.warnings
+
+
+# Long gray-walled house: a front double door whose arcs touch in the middle,
+# beside a bathroom wall.
+
+
+@pytest.mark.parametrize(
+    "start, end",
+    [
+        ((1115, 712), (1209, 712)),  # front double door
+        ((599, 360), (794, 360)),  # office sliding door
+        ((486, 360), (576, 360)),  # bedroom 1
+        ((1466, 478), (1536, 478)),  # bedroom 4
+    ],
+)
+def test_gray_ranch_doors(drafts, start, end) -> None:
+    doors = drafts["gray_ranch"].floor_plan.layout.doors
+    assert _has_opening(doors, start, end), doors
+
+
+def test_gray_ranch_counts_and_outline(drafts) -> None:
+    draft = drafts["gray_ranch"]
+    layout = draft.floor_plan.layout
+    assert (len(layout.doors), len(layout.windows)) == (9, 12)
+    assert layout.indoor_domain is not None and len(layout.indoor_domain.boundary) == 4
     assert not draft.warnings
 
 
