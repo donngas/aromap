@@ -337,6 +337,23 @@ def test_ground_floor_has_five_doors_and_one_outline(drafts) -> None:
     assert layout.indoor_domain is not None
 
 
+def test_ground_floor_stair_entrance_has_no_wall(drafts) -> None:
+    # Beside the bedroom 2 door, the stairs open onto the dining area (y=643,
+    # x 318-428): open floor, not wall. The short wall from the door to the stair
+    # post stays.
+    walls = drafts["ground_floor"].floor_plan.layout.walls
+    assert _has_opening(walls, (234, 643), (318, 643)), walls
+    across = [
+        w
+        for w in walls
+        if abs(w.start.y - 643) <= TOLERANCE_PX
+        and abs(w.end.y - 643) <= TOLERANCE_PX
+        and min(w.start.x, w.end.x) < 410
+        and max(w.start.x, w.end.x) > 330
+    ]
+    assert not across, across
+
+
 # House with a front porch: half-open doors drawn as a leaf with a short arc.
 
 

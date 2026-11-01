@@ -72,6 +72,10 @@ LEAF_REACH_RATIO = 0.8
 # Beyond this many gap widths from the hinge the line must stop: longer lines are
 # furniture or fixture edges that happen to start at the wall.
 LEAF_END_RATIO = 1.3
+# A piece of a gap left beside a door, at least an opening wide and with less
+# than this fraction of it drawn as wall, is open floor (e.g. the open side of a
+# stair or a passage next to a stockroom door), so it is not filled with wall.
+MAX_OPEN_FLOOR_WALL_FRACTION = 0.5
 
 OpeningKind = Literal["door", "window"]
 
@@ -123,6 +127,8 @@ class _Symbols:
     ) -> None:
         self.lines = lines
         self.thickness = thickness
+        self.wall_pixels = wall_pixels
+        self.walls = walls or []
         # Door leaves are thin lines away from the walls (a wall meeting the gap
         # end would otherwise look like a leaf opened square to the wall).
         self.leaf_lines = (lines > 0).astype(np.uint8)
@@ -182,6 +188,47 @@ class _Symbols:
             if _has_leaf(self.leaf_lines, gap, self.thickness):
                 return [Opening("door", gap)]
         return []
+
+    def extent(self, gap: WallSegment, found: list[Opening]) -> tuple[float, float]:
+        """Part of the gap to fill with wall around the openings found in it.
+
+        Normally the whole gap. When a door leaves an opening-wide piece with no
+        wall drawn at one end, that piece is open floor and is left out. If both
+        ends are like that the whole gap is kept, so the door stays on a wall.
+        A wall reaching the line in that piece (e.g. at a stair post) still gets
+        the short wall from the door to it; only the rest is open floor.
+        """
+        if self.wall_pixels is None or not any(o.kind == "door" for o in found):
+            return gap.start, gap.end
+        start = min(o.span.start for o in found)
+        end = max(o.span.end for o in found)
+        open_start = self._is_open_floor(replace(gap, end=start))
+        open_end = self._is_open_floor(replace(gap, start=end))
+        if open_start and not open_end:
+            return self._wall_before_open_floor(gap, start, -1), gap.end
+        if open_end and not open_start:
+            return gap.start, self._wall_before_open_floor(gap, end, 1)
+        return gap.start, gap.end
+
+    def _wall_before_open_floor(self, gap: WallSegment, door_end: float, direction: int) -> float:
+        """Where the wall from a door ends, going ``direction`` into open floor: at
+        the nearest wall reaching the line, if enough open floor is left after it."""
+        far_end = gap.end if direction > 0 else gap.start
+        reach = [
+            wall.offset
+            for wall in self.walls
+            if wall.orientation != gap.orientation
+            and wall.start - self.thickness <= gap.offset <= wall.end + self.thickness
+            and 0 < (wall.offset - door_end) * direction
+            and (far_end - wall.offset) * direction >= self.min_gap
+        ]
+        return min(reach, key=lambda x: abs(x - door_end), default=door_end)
+
+    def _is_open_floor(self, piece: WallSegment) -> bool:
+        if piece.end - piece.start < self.min_gap:
+            return False
+        band = _wall_band(self.wall_pixels, piece, self.thickness)
+        return band.size > 0 and (band > 0).mean() < MAX_OPEN_FLOOR_WALL_FRACTION
 
 
 def _has_leaf(lines: np.ndarray, gap: WallSegment, thickness: int) -> bool:
@@ -261,7 +308,15 @@ def _bridge_collinear_gaps(
             found = symbols.find(gap) if min_gap <= width <= max_gap else []
             if found:
                 openings.extend(found)
-                current = replace(current, end=segment.end)
+                start, end = symbols.extent(gap, found)
+                if end < gap.end:  # Open floor after the door.
+                    walls.append(replace(current, end=end))
+                    current = segment
+                elif start > gap.start:  # Open floor before the door.
+                    walls.append(current)
+                    current = replace(segment, start=start)
+                else:
+                    current = replace(current, end=segment.end)
             else:
                 walls.append(current)
                 current = segment
@@ -292,9 +347,18 @@ def _bridge_gaps_to_walls(
             found = symbols.find(gap)
             if not found:
                 continue
+            start, end = symbols.extent(gap, found)
+            # Open floor between the door and the far wall: the door only extends
+            # this wall, which then doesn't reach that wall (open floor on this
+            # side keeps the whole gap as before).
+            reached = target
+            if side == "start" and start > gap.start:
+                reached = start
+            elif side == "end" and end < gap.end:
+                reached = end
             segment_openings.extend(found)
-            bridged = replace(bridged, **{side: target})
-            bridged_ends += 1
+            bridged = replace(bridged, **{side: reached})
+            bridged_ends += reached == target
         # An isolated piece is a wall between two openings only if both ends reach
         # walls; bridging just one end would attach stray drawings such as equipment.
         isolated = not any(segment.touches(other) for other in segments if other is not segment)

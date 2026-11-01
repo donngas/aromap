@@ -109,6 +109,58 @@ def test_doors_either_side_of_a_wall_are_separate() -> None:
     assert WallSegment("horizontal", 150, 0, 300) in walls
 
 
+def _wall_pixels(segments: list[WallSegment], thickness: int = 10) -> np.ndarray:
+    mask = _blank()
+    half = thickness // 2
+    for s in segments:
+        (x1, y1), (x2, y2) = s.endpoints
+        corners = (int(x1) - half, int(y1) - half), (int(x2) + half, int(y2) + half)
+        cv2.rectangle(mask, *corners, 255, -1)
+    return mask
+
+
+def test_open_floor_beside_door_is_not_filled_with_wall() -> None:
+    # A stockroom door (hinged at x=80) and, past its swing, an open passage with
+    # no wall drawn up to x=220.
+    segments = _gap_between(80, 220)
+    details = _swing(_blank(), (80, 150), 50, 270, 360)
+
+    walls, openings = find_openings(
+        segments, _blank(), details, thickness=10, wall_pixels=_wall_pixels(segments)
+    )
+
+    assert _door_spans(openings) == [(80, 130)]
+    door_wall = [round(w.end) for w in walls if w.orientation == "horizontal" and w.start == 0]
+    assert door_wall == [130]  # ends with the door
+    assert WallSegment("horizontal", 150, 220, 300) in walls
+
+
+def test_door_wall_reaches_post_before_open_floor() -> None:
+    # Past the door swing a post wall comes down to the line at x=150; the wall
+    # runs from the door to it and only the rest (x 150-220) is open floor.
+    segments = [*_gap_between(80, 220), WallSegment("vertical", 150, 155, 300)]
+    details = _swing(_blank(), (80, 150), 50, 270, 360)
+
+    walls, openings = find_openings(
+        segments, _blank(), details, thickness=10, wall_pixels=_wall_pixels(segments)
+    )
+
+    assert _door_spans(openings) == [(80, 130)]
+    assert WallSegment("horizontal", 150, 0, 150) in walls
+    assert WallSegment("horizontal", 150, 220, 300) in walls
+
+
+def test_wall_drawn_beside_door_still_fills_the_gap() -> None:
+    # Same door, but wall is drawn past its swing (too faint for wall detection).
+    segments = _gap_between(80, 220)
+    details = _swing(_blank(), (80, 150), 50, 270, 360)
+    wall_pixels = _wall_pixels([*segments, WallSegment("horizontal", 150, 130, 220)])
+
+    walls, _ = find_openings(segments, _blank(), details, thickness=10, wall_pixels=wall_pixels)
+
+    assert WallSegment("horizontal", 150, 0, 300) in walls
+
+
 def test_double_door_leaves_meeting_in_the_middle_are_one_door() -> None:
     # Two leaves hinged at the gap ends; a few pixels between their tips.
     details = _swing(_blank(), (80, 150), 66, 270, 360)
