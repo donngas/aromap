@@ -276,3 +276,63 @@ def test_cors_and_openapi(tmp_path):
         assert {"type": "null"} in domain_schema["anyOf"]
         assert "pixels" in schema["components"]["schemas"]["PixelPoint"]["properties"]["x"]["description"]
         assert "meters" in schema["components"]["schemas"]["MetricPoint"]["properties"]["x"]["description"]
+
+
+@pytest.mark.parametrize("flag", [None, False, True, "hybrid"])
+def test_optional_llm_routing(tmp_path, monkeypatch, flag):
+    from app.infrastructure import jobs
+
+    selected = []
+
+    class Process:
+        exitcode = 0
+
+        def __init__(self, *, target, args):
+            selected.append(args[2])
+            self.target, self.args = target, args
+
+        def start(self):
+            args = list(self.args)
+            args[2] = "tests.recognition_provider:recognize"
+            self.target(*args)
+
+        def is_alive(self):
+            return False
+
+        def close(self):
+            pass
+
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(jobs.multiprocessing, "get_context", lambda _: SimpleNamespace(Process=Process))
+    settings = Settings(data_dir=tmp_path, recognition_callable="tests.recognition_provider:recognize")
+    with TestClient(create_app(settings)) as client:
+        image_id = upload(client).json()["image_id"]
+        payload = {"image_id": image_id}
+        if flag is not None:
+            payload["use_llm"] = flag
+        response = client.post("/api/floor-plans/recognitions", json=payload)
+        assert response.status_code == 202
+        assert wait_terminal(client, response.json()["status_url"])["state"] == "succeeded"
+        expected = ("app.floor_plans.recognition.hybrid:recognize_floor_plan" if flag == "hybrid" else
+                    "app.floor_plans.recognition.llm:recognize_floor_plan" if flag else settings.recognition_callable)
+        assert selected == [expected]
+        request = tmp_path / "results" / f"{response.json()['job_id']}.request.json"
+        import json
+        assert json.loads(request.read_text()) == {"use_llm": flag if flag is not None else False}
+        assert client.post("/api/floor-plans/recognitions", json={"image_id": image_id, "use_llm": "yes"}).status_code == 422
+
+
+def test_llm_without_credentials_fails_job_and_default_still_works(tmp_path, monkeypatch):
+    # Empty inherited environment wins over any developer .env in the spawned child.
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+    settings = Settings(data_dir=tmp_path, recognition_callable="tests.recognition_provider:recognize")
+    with TestClient(create_app(settings)) as client:
+        image_id = upload(client).json()["image_id"]
+        accepted = client.post("/api/floor-plans/recognitions", json={"image_id": image_id, "use_llm": True})
+        result = wait_terminal(client, accepted.json()["status_url"])
+        assert result["state"] == "failed"
+        assert result["error"]["code"] == "recognition_failed"
+        assert result["result"] is None
+        accepted = client.post("/api/floor-plans/recognitions", json={"image_id": image_id})
+        assert wait_terminal(client, accepted.json()["status_url"])["state"] == "succeeded"

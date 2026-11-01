@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 import multiprocessing
 import time
 from uuid import uuid4
+from typing import Literal
 
 from fastapi import HTTPException
 
@@ -109,23 +110,29 @@ class Jobs:
                 "WHERE state IN ('queued', 'running')", (time.time(),)
             )
 
-    def submit_recognition(self, image_id: str) -> str:
+    def submit_recognition(self, image_id: str, *, use_llm: bool | Literal["hybrid"] = False) -> str:
         if self.queue.full():
             raise api_error(429, "queue_full", "Recognition queue is full; try again later.")
         now = time.time()
         job_id = uuid4().hex
-        with self.database.connect() as db:
-            db.execute("BEGIN IMMEDIATE")
-            image = db.execute(
-                "SELECT * FROM uploads WHERE id=? AND expires_at>?", (image_id, now)
-            ).fetchone()
-            if image is None or not self.storage.path(image["relative_path"]).is_file():
-                raise api_error(404, "image_not_found", "Image is unknown or expired.")
-            db.execute(
-                "INSERT INTO jobs (id, kind, state, image_id, created_at, updated_at, expires_at) "
-                "VALUES (?, 'recognition', 'queued', ?, ?, ?, ?)",
-                (job_id, image_id, now, now, now + self.settings.retention_seconds),
-            )
+        request_path = f"results/{job_id}.request.json"
+        try:
+            with self.database.connect() as db:
+                db.execute("BEGIN IMMEDIATE")
+                image = db.execute(
+                    "SELECT * FROM uploads WHERE id=? AND expires_at>?", (image_id, now)
+                ).fetchone()
+                if image is None or not self.storage.path(image["relative_path"]).is_file():
+                    raise api_error(404, "image_not_found", "Image is unknown or expired.")
+                self.storage.write_json(request_path, {"use_llm": use_llm})
+                db.execute(
+                    "INSERT INTO jobs (id, kind, state, image_id, created_at, updated_at, expires_at) "
+                    "VALUES (?, 'recognition', 'queued', ?, ?, ?, ?)",
+                    (job_id, image_id, now, now, now + self.settings.retention_seconds),
+                )
+        except Exception:
+            self.storage.remove(request_path)
+            raise
         # Event-loop only: no await between the capacity check and enqueue.
         self.queue.put_nowait(job_id)
         return job_id
@@ -210,9 +217,14 @@ class Jobs:
 
     async def run_recognition(self, job_id: str, image):
         path = f"results/{job_id}.json"
+        request_path = self.storage.path(f"results/{job_id}.request.json")
+        use_llm = json.loads(request_path.read_text())["use_llm"] if request_path.exists() else False
+        target = ("app.floor_plans.recognition.hybrid:recognize_floor_plan" if use_llm == "hybrid" else
+                  "app.floor_plans.recognition.llm:recognize_floor_plan" if use_llm else
+                  self.settings.recognition_callable)
         process = multiprocessing.get_context("spawn").Process(
             target=publish_recognition,
-            args=(str(self.storage.root), job_id, self.settings.recognition_callable,
+            args=(str(self.storage.root), job_id, target,
                   str(self.storage.path(image["relative_path"])), image["width_px"], image["height_px"]),
         )
         process.start()

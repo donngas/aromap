@@ -36,7 +36,7 @@ def get_image(request: Request, image_id: str):
 
 @router.post("/recognitions", status_code=202, response_model=RecognitionAccepted)
 async def submit_recognition(request: Request, payload: RecognitionRequest):
-    job_id = request.app.state.jobs.submit_recognition(payload.image_id)
+    job_id = request.app.state.jobs.submit_recognition(payload.image_id, use_llm=payload.use_llm)
     return RecognitionAccepted(
         job_id=job_id,
         status_url=str(request.app.url_path_for("recognition_status", job_id=job_id)),

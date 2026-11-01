@@ -48,6 +48,13 @@ def recognize(image_path: Path) -> RecognitionDraft:
     Raises InvalidImageError when the file cannot be read or decoded.
     """
     original = load_image(image_path)
+    from app.floor_plans.recognition.adaptive import improve_geometry
+
+    return improve_geometry(original, _recognize_orthogonal(original), _recognize_orthogonal)
+
+
+def _recognize_orthogonal(original) -> RecognitionDraft:
+    """Existing axis-aligned detector, also used after safe page deskewing."""
     height, width = original.shape[:2]
     image, scale = standardize_size(original)
     segments: list[WallSegment] = []
