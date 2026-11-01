@@ -33,6 +33,11 @@ interface AnalysisPanelProps {
   onStartCompare: () => void
   onStopCompare: () => void
   onCompareChange: (side: 'a' | 'b', scenarioId: string) => void
+  /** While comparing: whether both sides pan and zoom together. */
+  linkedViews: boolean
+  onLinkedViewsChange: (linked: boolean) => void
+  /** Fits both sides to the whole plan again. */
+  onFitViews: () => void
 }
 
 const percent = (share: number) => `${Math.round(share * 100)}%`
@@ -48,6 +53,9 @@ export function AnalysisPanel({
   onStartCompare,
   onStopCompare,
   onCompareChange,
+  linkedViews,
+  onLinkedViewsChange,
+  onFitViews,
 }: AnalysisPanelProps) {
   const [showInfo, setShowInfo] = useState(false)
   const canCompare = comparable.length >= 2
@@ -145,6 +153,29 @@ export function AnalysisPanel({
           </div>
         </div>
       </section>
+
+      {compare && (
+        <section className="ws-panel__section">
+          <h3 className="ws-panel__title">화면 보기</h3>
+          <label className="ws-switch">
+            <span>두 화면 같이 움직이기</span>
+            <input
+              type="checkbox"
+              role="switch"
+              checked={linkedViews}
+              onChange={(event) => onLinkedViewsChange(event.target.checked)}
+            />
+          </label>
+          <p className="field__hint">
+            {linkedViews
+              ? '한쪽을 확대하거나 옮기면 다른 쪽도 똑같이 움직여요.'
+              : '왼쪽과 오른쪽을 따로 확대하고 옮길 수 있어요.'}
+          </p>
+          <button type="button" className="ws-compare__toggle" onClick={onFitViews}>
+            두 화면 처음 크기로
+          </button>
+        </section>
+      )}
 
       <section className="ws-panel__section">
         {compare ? (

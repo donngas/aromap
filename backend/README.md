@@ -995,3 +995,97 @@ geometry can still be ambiguous. An open window too far from a boundary or an
 opening that cannot be mapped to an indoor cell fails preparation. Openings are sampled into indoor
 cells and their widths conserved. No outdoor cells are simulated. Furniture
 resistance and height-dependent flow are not implemented.
+
+## Experimental LLM recognition
+
+The existing OpenCV/configured recognizer remains the default. To opt in per job,
+set `OPENAI_API_KEY` in the repository root `.env` (or export it in the backend
+environment), then submit:
+
+```http
+POST /api/floor-plans/recognitions
+Content-Type: application/json
+
+{"image_id": "<uploaded-image-id>", "use_llm": true}
+```
+
+Compose forwards the key only to the backend. For local uv execution, this optional
+provider loads the root `.env`, then `backend/.env`, without overriding environment
+variables. This does not change how other application settings are loaded.
+Omitting `use_llm` or setting it to `false` uses the current recognizer and needs no
+OpenAI credentials. The frontend does not enable this flag automatically.
+
+The LLM route sends the prepared PNG to the first-party OpenAI Responses API using
+`gpt-6-luna`, `reasoning.effort=none`, and a strict structured extraction schema.
+One request extracts pixel wall centerlines, openings, room labels, and an optional
+indoor polygon. Server code generates IDs, splits wall junctions, validates bounds
+and polygons, and assigns openings to final walls. A three-pixel alignment tolerance handles image
+tracing noise. The model extracts openings independently; backend geometry assigns a parent
+only when it identifies a unique spanning wall. Ambiguous associations are omitted. Cuts at detected apertures are bridged only when
+collinear wall evidence supports both jambs; every repair produces a warning.
+Unsupported openings are omitted with warnings, preserving useful partial drafts. It preserves the existing
+`RecognitionDraft` result and polling API; calibration remains unset. Openings
+crossing a junction are skipped with a warning. Disconnected wall endpoints within
+one pixel of another wall are flagged for review without moving the geometry. Invalid geometry, refused or
+incomplete output, and provider errors fail the job through the existing
+`recognition_failed` contract; there is no automatic fallback to OpenCV. Server
+logs retain a sanitized failure category (such as authentication, rate limit,
+refusal, timeout, or invalid geometry), without provider bodies or exception text.
+
+SDK retries are disabled, with a 50-second request timeout and the existing
+`AROMAP_RECOGNITION_TIMEOUT_SECONDS` process deadline (default 60 seconds). The API
+request uses `store=false`. Geometry remains experimental and requires user review.
+
+### Hybrid review mode
+
+Submit `{"image_id":"<uploaded-image-id>","use_llm":"hybrid"}` to run the built-in
+OpenCV pipeline and then have GPT-6 Luna review that draft. This is a third mode:
+`false`/omitted continues to use the configured recognizer, and `true` continues to
+use LLM-only extraction. Hybrid deliberately starts from the built-in OpenCV
+provider, independent of `AROMAP_RECOGNITION_CALLABLE` overrides.
+
+The review receives the original PNG, draft JSON, a labeled diagnostic overlay,
+and up to six source crops centered on openings and possible wall gaps (four
+overlapping quadrants when there are no candidates). Its tailored prompt focuses on missing or
+misclassified doors/windows, swing arcs versus leaves, sliding panels, frame
+centerlines, false wall detections, and indoor footprint corrections. Crop edits
+use local pixels; the backend maps them to prepared-image coordinates. Existing
+IDs or compact overlay labels identify review targets.
+
+The model returns structured edits rather than replacing the full draft. Only
+high-confidence wall/opening edits are considered. Opening types must also include
+compatible visual evidence (swing arc, sliding track, folding panels, or fixed glazing). The backend validates bounds, unique parent
+walls, nonzero/overlapping openings, polygon validity, and retained opening
+references when walls are changed. Overlaps are checked after all retained and
+edited apertures have been projected onto the final candidate wall geometry. It
+nodes new junctions and preserves IDs for unchanged geometry and corrected openings.
+
+Related wall/opening corrections use atomic `edit_groups`: the whole group is
+accepted or rejected. New walls can declare a temporary `new_ref` for openings in
+the same group. Legacy flat arrays form one atomic group when they contain wall
+edits; standalone opening edits remain independent. A wall and its attached
+openings can therefore be moved or removed together without partial application.
+Unresolved orphaning, junctions through apertures, ambiguous associations, and
+uncertain groups are rejected with controlled reason codes. Other independent
+groups can still apply. Existing-opening type-only corrections may leave jambs
+unset to retain them exactly; `wall_span` specifies endpoints as fractions along
+a known parent wall when a visible extent correction is needed. Review warnings, reasons for applied edits, and an
+applied-correction count are returned in the existing warnings list.
+
+Hybrid uses the same backend-only `OPENAI_API_KEY`, first-party Responses API,
+`gpt-6-luna`, reasoning effort `none`, `store=false`, disabled SDK retries and
+existing job deadline. Missing credentials, refused/incomplete reviews, or provider
+failures fail the job; the service does not silently label an unreviewed OpenCV
+draft as a completed hybrid review. Geometric validation cannot establish that a
+visual classification is correct; hybrid drafts remain subject to user review.
+
+
+### Adaptive classic geometry
+
+The built-in classic route conservatively supplements its existing detector with
+local stroke-width centerlines, general-angle junctions and enclosed-partition
+checks. Clean rotated orthogonal plans can be deskewed for existing opening
+recognition; all results map back to the original image pixels. Existing successful
+fixture results are preserved. This targets reasonable digital drawings; openings
+on truly oblique walls and semantic separation of furniture remain limitations.
+See `docs/recognition-improvement-assessment.md` for measured cases and scope.
