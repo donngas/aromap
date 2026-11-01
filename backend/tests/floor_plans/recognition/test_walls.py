@@ -94,3 +94,62 @@ def test_snap_corners_trims_overhang_past_a_later_wall() -> None:
     snapped = snap_corners([side, bottom], thickness=18)
 
     assert WallSegment("vertical", 100, 20, 221) in snapped
+
+
+def test_corner_piece_beside_wall_thicker_than_estimate_is_kept() -> None:
+    # A 12 px side wall (thickness estimated at 10) with an 18 px corner piece
+    # before a window (30 px with the wall, under 3 thicknesses): the side wall
+    # must not hide the piece.
+    mask = np.zeros((300, 300), dtype=np.uint8)
+    mask[20:280, 40:52] = 255  # side wall
+    mask[262:274, 52:70] = 255  # corner piece
+
+    segments = detect_walls(mask, thickness=10)
+
+    pieces = [s for s in segments if s.orientation == "horizontal"]
+    assert len(pieces) == 1 and pieces[0].end >= 67, segments
+
+
+def test_short_wall_on_a_wall_line_is_kept() -> None:
+    # Between a window and a door: a 20 px piece on the storefront line, 50 px
+    # past the end of the storefront wall.
+    mask = np.zeros((300, 300), dtype=np.uint8)
+    mask[100:110, 20:150] = 255  # storefront wall
+    mask[100:110, 200:220] = 255  # short piece
+
+    segments = detect_walls(mask, thickness=10)
+
+    assert any(s.orientation == "horizontal" and s.start >= 195 for s in segments), segments
+
+
+def test_short_wall_between_two_crossing_walls_is_kept() -> None:
+    # A bay's side wall: two windows with a 20 px piece between them, and the
+    # walls it runs between crossing its line above and below.
+    mask = np.zeros((300, 300), dtype=np.uint8)
+    mask[45:55, 20:280] = 255  # wall above
+    mask[245:255, 20:280] = 255  # wall below
+    mask[140:160, 145:155] = 255  # short piece
+
+    segments = detect_walls(mask, thickness=10)
+
+    assert any(s.orientation == "vertical" and abs(s.offset - 149.5) <= 1 for s in segments)
+
+
+def test_short_wall_crossing_a_partition_keeps_its_ends() -> None:
+    # Between two windows a 17 px outer-wall piece meets a 4 px partition: its
+    # ends must not both snap onto the partition.
+    piece = WallSegment("horizontal", 50, 247, 264)
+    partition = WallSegment("vertical", 255, 50, 200)
+
+    snapped = snap_corners([piece, partition], thickness=10)
+
+    assert piece in snapped
+
+
+def test_wall_width_leftover_still_collapses() -> None:
+    piece = WallSegment("horizontal", 50, 250, 260)
+    partition = WallSegment("vertical", 255, 50, 200)
+
+    snapped = snap_corners([piece, partition], thickness=10)
+
+    assert all(s.orientation == "vertical" for s in snapped)

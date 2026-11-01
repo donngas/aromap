@@ -25,6 +25,9 @@ from app.floor_plans.recognition.walls import TOUCH_TOLERANCE_PX, WallSegment
 # door arc or window glazing are bridged (base layout format); a gap without a
 # symbol is open floor, e.g. an open-plan sales floor or a passage.
 MIN_OPENING_RATIO = 3
+# Small windows (e.g. a bathroom window) may be narrower, down to this multiple,
+# when glazing is drawn in the gap; doors keep the limit above.
+MIN_WINDOW_RATIO = 2
 MAX_OPENING_RATIO = 15
 # Plans with thin-drawn walls make real openings look too wide relative to the
 # wall, so gaps up to this fraction of the image's long side are also bridged,
@@ -92,6 +95,7 @@ def find_openings(
     details: np.ndarray,
     thickness: int,
     wall_pixels: np.ndarray | None = None,
+    glazing: np.ndarray | None = None,
 ) -> tuple[list[WallSegment], list[Opening]]:
     """Bridge door/window-sized gaps and return the bridged walls with openings.
 
@@ -102,10 +106,12 @@ def find_openings(
     drawings stay detached and can be dropped later.
     ``lines`` (dark lines of any shade) reveals glazing and door arcs; ``details``
     (strokes in any color) also reveals colored door arcs. ``wall_pixels`` (the
-    wall mask), when given, keeps wall edges from being read as arcs.
+    wall mask), when given, keeps wall edges from being read as arcs. ``glazing``,
+    when given, is used instead of ``lines`` to look for glazing (see
+    preprocess.glazing_mask).
     """
-    symbols = _Symbols(lines, details, thickness, wall_pixels, segments)
-    min_gap = MIN_OPENING_RATIO * thickness
+    symbols = _Symbols(lines, details, thickness, wall_pixels, segments, glazing)
+    min_gap = MIN_WINDOW_RATIO * thickness
     max_gap = max(symbols.max_door_gap, MAX_WINDOW_IMAGE_RATIO * max(lines.shape))
     walls, openings = _bridge_collinear_gaps(segments, min_gap, max_gap, symbols)
     walls, end_openings = _bridge_gaps_to_walls(walls, min_gap, max_gap, symbols)
@@ -124,8 +130,10 @@ class _Symbols:
         thickness: int,
         wall_pixels: np.ndarray | None,
         walls: list[WallSegment] | None = None,
+        glazing: np.ndarray | None = None,
     ) -> None:
         self.lines = lines
+        self.glazing = lines if glazing is None else glazing
         self.thickness = thickness
         self.wall_pixels = wall_pixels
         self.walls = walls or []
@@ -166,6 +174,10 @@ class _Symbols:
         from one of its ends (a door drawn half open). An empty list means no
         symbol.
         """
+        if gap.end - gap.start < self.min_gap:  # Only a small window fits.
+            if _has_glazing(self.glazing, gap, self.thickness):
+                return [Opening("window", gap)]
+            return []
         door_sized = gap.end - gap.start <= self.max_door_gap
         arcs = self.arcs_along(gap.orientation) if door_sized else []
         spans = _merge_spans(swing_spans(arcs, gap, self.thickness), self.thickness)
@@ -178,11 +190,11 @@ class _Symbols:
             start, end = spans[0][0], spans[-1][1]
             for side in (replace(gap, end=start), replace(gap, start=end)):
                 if side.end - side.start >= self.min_gap and _has_glazing(
-                    self.lines, side, self.thickness
+                    self.glazing, side, self.thickness
                 ):
                     found.append(Opening("window", side))
             return found
-        if _has_glazing(self.lines, gap, self.thickness):
+        if _has_glazing(self.glazing, gap, self.thickness):
             return [Opening("window", gap)]
         if self.min_gap <= gap.end - gap.start <= MAX_OPENING_RATIO * self.thickness:
             if _has_leaf(self.leaf_lines, gap, self.thickness):

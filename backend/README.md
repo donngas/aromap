@@ -759,9 +759,14 @@ is the wall thickness measured from the image. The committed plans in
 **Walls**
 - Dark (gray 100–180 or darker), at least 3 px, and clearly thicker than every
   other line (about twice furniture and text lines). Strokes under 0.35 T are
-  ignored.
+  ignored, except thinner inner walls (at least 3 px) in the same color as the
+  thick walls: solid bars joined to the walls, with a wall past each end (or one
+  free end if at least 10 T long), not running alongside another wall.
+  Furniture drawn in wall color with those shapes would be read as wall.
 - Horizontal or vertical only; diagonal walls are missed.
-- At least 3 T long, or 1 T if the piece meets another wall.
+- At least 3 T long, or 1 T if the piece meets another wall, lies on a wall's
+  line, or has walls across its line on both sides (within 15 T), e.g. a short
+  wall between two windows.
 - Outer walls form a closed loop: every gap in them needs a door or window
   symbol, otherwise there is no indoor outline.
 - Little extra drawn on the wall lines; corner column markers add small steps to
@@ -781,6 +786,8 @@ is the wall thickness measured from the image. The committed plans in
   it), 15–75° off the wall, about as long as the gap (3–15 T).
 
 **Windows**
+- Gap at least 2 T wide (doors need 3 T). Light gray lines right beside black
+  walls are found too.
 - At least 2 thin parallel lines inside the gap, each along at least 60% of it
   with one unbroken piece at least 35% of the gap, within 0.5–0.75 T of the wall
   line. Dashed lines across a gap are an open passage, not glass.

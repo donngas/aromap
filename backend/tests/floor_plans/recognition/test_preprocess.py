@@ -10,6 +10,7 @@ from app.floor_plans.recognition.preprocess import (
     detail_mask,
     estimate_wall_thickness,
     fill_hollow_walls,
+    glazing_mask,
     line_mask,
     load_image,
     standardize_size,
@@ -181,3 +182,74 @@ def test_wall_mask_ignores_stray_dark_marks_in_line_drawings(
 
     assert thickness is not None and thickness >= 6  # hollow walls, not the specks
     assert mask[53, 250] == 255
+
+
+def _shop_with_thick_walls(width: int = 12) -> np.ndarray:
+    image = np.full((400, 600, 3), 255, dtype=np.uint8)
+    for top_left, bottom_right in [
+        ((40, 40), (560, 40 + width - 1)),
+        ((40, 361 - width), (560, 360)),
+        ((40, 40), (40 + width - 1, 360)),
+        ((561 - width, 40), (560, 360)),
+    ]:
+        cv2.rectangle(image, top_left, bottom_right, (0, 0, 0), cv2.FILLED)
+    return image
+
+
+def test_wall_mask_keeps_thin_partitions_in_wall_color() -> None:
+    # 12 px black outer walls; a black stockroom partition only 4 px thick runs
+    # from the top wall to the bottom wall.
+    image = _shop_with_thick_walls()
+    cv2.rectangle(image, (400, 52), (403, 348), (0, 0, 0), cv2.FILLED)
+
+    mask, _ = wall_mask(image)
+
+    assert mask[200, 400:404].all()
+
+
+def test_wall_mask_skips_thin_strokes_that_are_not_walls() -> None:
+    image = _shop_with_thick_walls()
+    # 4 px strokes, each failing one wall check:
+    cv2.rectangle(image, (400, 52), (403, 348), (150, 150, 150), cv2.FILLED)  # gray shelf
+    cv2.rectangle(image, (200, 150), (300, 153), (0, 0, 0), cv2.FILLED)  # loose counter edge
+    cv2.rectangle(image, (52, 200), (100, 203), (0, 0, 0), cv2.FILLED)  # shelf, free end
+    cv2.rectangle(image, (100, 58), (300, 61), (0, 0, 0), cv2.FILLED)  # counter along wall
+    for edge in [((52, 280), (120, 283)), ((52, 327), (120, 330)), ((117, 280), (120, 330))]:
+        cv2.rectangle(image, *edge, (0, 0, 0), cv2.FILLED)  # outlined table at the wall
+
+    mask, _ = wall_mask(image)
+
+    assert not mask[200, 400:404].any()
+    assert not mask[150:154, 200:301].any()
+    assert not mask[200:204, 60:101].any()
+    assert not mask[58:62, 100:301].any()
+    assert not mask[300, 64:120].any()
+
+
+def test_wall_mask_keeps_small_wall_between_two_windows() -> None:
+    # 10 px outer wall with two windows (gaps) and 12 px of wall between them.
+    image = np.full((300, 400, 3), 255, dtype=np.uint8)
+    for x0, x1 in [(20, 120), (180, 191), (250, 380)]:
+        cv2.rectangle(image, (x0, 150), (x1, 159), (0, 0, 0), cv2.FILLED)
+    cv2.rectangle(image, (20, 20), (29, 280), (0, 0, 0), cv2.FILLED)
+    cv2.rectangle(image, (371, 20), (380, 280), (0, 0, 0), cv2.FILLED)
+
+    mask, _ = wall_mask(image)
+
+    assert mask[155, 180:192].all()
+
+
+def test_glazing_mask_finds_light_lines_beside_black_walls() -> None:
+    # A small window: two light gray lines in a 24 px gap between black wall ends.
+    image = np.full((100, 200, 3), 255, dtype=np.uint8)
+    cv2.rectangle(image, (0, 40), (88, 51), (0, 0, 0), cv2.FILLED)
+    cv2.rectangle(image, (112, 40), (199, 51), (0, 0, 0), cv2.FILLED)
+    for y in (41, 50):
+        cv2.line(image, (89, y), (111, y), (205, 205, 205), 1)
+    walls, _ = wall_mask(image)
+
+    glazing = glazing_mask(image, walls)
+
+    for y in (41, 50):
+        assert glazing[y, 92:109].mean() / 255 >= 0.9
+        assert line_mask(image)[y, 92:109].mean() / 255 < 0.6  # missed without it

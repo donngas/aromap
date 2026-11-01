@@ -18,6 +18,17 @@ MIN_LENGTH_RATIO = 3
 # perpendicular wall: corner returns beside windows and jambs beside doors.
 # Free-standing short blocks (display stands, counters) are still ignored.
 MIN_STUB_LENGTH_RATIO = 1
+# Short pieces on a longer wall's line, within this many wall thicknesses of its
+# end, are also kept: wall between two openings (e.g. between a window and a
+# door). So are short pieces with a wall across their line this close on both
+# sides (e.g. between two windows of a bay). They only join the walls if the
+# openings between them are found.
+MAX_STUB_GAP_RATIO = 15
+# A piece whose ends would both snap onto one crossing wall is that wall's own
+# width and is dropped, unless it is at least this many thicknesses long: then it
+# is a short wall crossing it (e.g. where a partition meets the outer wall between
+# two windows) and keeps its drawn ends.
+MIN_CROSSING_PIECE_RATIO = 1.5
 # After corners are snapped, pieces shorter than this multiple of the thickness
 # are leftovers of a wall's own width (e.g. anti-aliased edges), not walls.
 MIN_PIECE_RATIO = 0.5
@@ -67,8 +78,9 @@ def detect_walls(mask: np.ndarray, thickness: int) -> list[WallSegment]:
     stub_length = MIN_STUB_LENGTH_RATIO * thickness + 1
     stubs = [
         stub
-        for stub in _segments(mask, stub_length, thickness)
-        if _meets_perpendicular(stub, walls, thickness) and not _is_covered(stub, walls, thickness)
+        for stub in _stub_segments(mask, stub_length, thickness)
+        if (_meets_perpendicular(stub, walls, thickness) or _on_wall_line(stub, walls, thickness))
+        and not _is_covered(stub, walls, thickness)
     ]
     segments = _merge_collinear(walls + stubs, tolerance=thickness)
     return snap_corners(segments, thickness)
@@ -93,6 +105,26 @@ def _segments(mask: np.ndarray, length: int, thickness: int) -> list[WallSegment
     ]
 
 
+def _stub_segments(mask: np.ndarray, length: int, thickness: int) -> list[WallSegment]:
+    """Short pieces, also looked for with the long walls across them removed.
+
+    A wall thicker than the short kernel (e.g. a 12 px outer wall with a 10 px
+    estimate) passes the kernel too and joins a corner piece into one tall blob,
+    which is dropped as too thick; without the crossing wall the piece is found.
+    """
+    length |= 1
+    long_length = (MIN_LENGTH_RATIO * thickness) | 1
+    segments = _segments(mask, length, thickness)
+    for orientation, across in (("horizontal", (1, long_length)), ("vertical", (long_length, 1))):
+        crossing = cv2.morphologyEx(
+            mask, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, across)
+        )
+        segments += _directional_segments(
+            cv2.subtract(mask, crossing), orientation, length, thickness
+        )
+    return segments
+
+
 def _meets_perpendicular(
     stub: WallSegment, walls: list[WallSegment], tolerance: float
 ) -> bool:
@@ -101,6 +133,29 @@ def _meets_perpendicular(
         and wall.start - tolerance <= stub.offset <= wall.end + tolerance
         and stub.start - tolerance <= wall.offset <= stub.end + tolerance
         for wall in walls
+    )
+
+
+def _on_wall_line(stub: WallSegment, walls: list[WallSegment], thickness: float) -> bool:
+    """Whether a longer wall lies on the stub's line, or walls cross its line on
+    both sides, within MAX_STUB_GAP_RATIO thicknesses."""
+    reach = MAX_STUB_GAP_RATIO * thickness
+    if any(
+        wall.orientation == stub.orientation
+        and abs(wall.offset - stub.offset) <= thickness / 2
+        and wall.start - reach <= stub.end
+        and stub.start <= wall.end + reach
+        for wall in walls
+    ):
+        return True
+    crossing = [
+        wall.offset
+        for wall in walls
+        if wall.orientation != stub.orientation
+        and wall.start - thickness <= stub.offset <= wall.end + thickness
+    ]
+    return any(0 <= stub.start - c <= reach for c in crossing) and any(
+        0 <= c - stub.end <= reach for c in crossing
     )
 
 
@@ -194,4 +249,7 @@ def _snap(
         ]
         return min(candidates, key=lambda c: abs(c - value), default=value)
 
-    return replace(segment, start=nearest(segment.start), end=nearest(segment.end))
+    start, end = nearest(segment.start), nearest(segment.end)
+    if start == end and segment.end - segment.start >= MIN_CROSSING_PIECE_RATIO * tolerance:
+        return segment
+    return replace(segment, start=start, end=end)

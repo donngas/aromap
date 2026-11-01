@@ -17,6 +17,7 @@ from app.floor_plans.recognition.indoor import estimate_footprint, is_interior
 from app.floor_plans.recognition.openings import Opening, find_openings
 from app.floor_plans.recognition.preprocess import (
     detail_mask,
+    glazing_mask,
     line_mask,
     load_image,
     standardize_size,
@@ -59,7 +60,12 @@ def recognize(image_path: Path) -> RecognitionDraft:
     if thickness is not None:
         segments = detect_walls(mask, thickness)
         segments, openings = find_openings(
-            segments, line_mask(image), detail_mask(image), thickness, mask
+            segments,
+            line_mask(image),
+            detail_mask(image),
+            thickness,
+            mask,
+            glazing=glazing_mask(image, mask),
         )
         segments = snap_corners(segments, thickness)
         kept = drop_small_groups(segments)

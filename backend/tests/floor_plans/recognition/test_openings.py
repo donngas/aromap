@@ -434,3 +434,22 @@ def test_wide_gap_is_not_an_opening() -> None:
 
     assert openings == []
     assert walls == segments
+
+
+def test_small_glazed_gap_is_a_window() -> None:
+    # A 25 px restroom window (2.5 wall thicknesses) with two glazing lines.
+    lines = _blank()
+    for y in (146, 154):
+        cv2.line(lines, (80, y), (105, y), 255, 1)
+
+    walls, openings = find_openings(_gap_between(80, 105), lines, _blank(), thickness=10)
+
+    assert [(o.kind, o.span.start, o.span.end) for o in openings] == [("window", 80, 105)]
+    assert WallSegment("horizontal", 150, 0, 300) in walls
+
+
+def test_small_gap_without_glazing_stays_open() -> None:
+    walls, openings = find_openings(_gap_between(80, 105), _blank(), _blank(), thickness=10)
+
+    assert not openings
+    assert WallSegment("horizontal", 150, 0, 80) in walls
