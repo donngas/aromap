@@ -70,9 +70,12 @@ def find_door_arcs(
         piece = labels[y : y + height, x : x + width] == label
         if max(width, height) >= min_radius / 2:
             ys, xs = np.nonzero(piece)
-            arc = _fit_arc(xs + x, ys + y)
-            if arc is not None and min_radius <= arc.radius <= max_radius:
-                arcs.append(arc)
+            # Both arcs of a double door may touch where they meet: one piece.
+            found = [
+                arc for arc in _fit_arcs(xs + x, ys + y) if min_radius <= arc.radius <= max_radius
+            ]
+            if found:
+                arcs.extend(found)
                 continue
         # A dash, or part of a faint arc that line detection broke apart.
         pieces[y : y + height, x : x + width][piece] = 255

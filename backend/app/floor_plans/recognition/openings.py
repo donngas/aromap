@@ -155,6 +155,7 @@ class _Symbols:
         ]
         # Which edge of each arc is the doorway, where it can be told (see _closing_axis).
         self.axis = {arc: _closing_axis(arc, walls or [], thickness) for arc in self.arcs}
+        self.axis.update(_double_door_axes(self.arcs, thickness))
 
     def arcs_along(self, orientation: str) -> list[DoorArc]:
         """Arcs whose doorway may lie along a wall line of this orientation."""
@@ -465,6 +466,32 @@ def _closing_axis(arc: DoorArc, walls: list[WallSegment], thickness: int) -> str
     }
     touching = [axis for axis, point in ends.items() if _near_wall(point, walls, near)]
     return touching[0] if len(touching) == 1 else None
+
+
+def _double_door_axes(arcs: list[DoorArc], thickness: int) -> dict[DoorArc, str]:
+    """Doorway axis of the two arcs of a double door.
+
+    Their closed edges meet each other in the middle, not a wall, so
+    _closing_axis can't tell (and an open leaf beside a wall misleads it). Two
+    arcs hinged on one line that swing toward each other with tips meeting
+    (within one wall thickness) close along that line.
+    """
+    axes = {}
+    for i, a in enumerate(arcs):
+        for b in arcs[i + 1 :]:
+            for axis, along, across, sign in (
+                ("horizontal", "hinge_x", "hinge_y", "sign_x"),
+                ("vertical", "hinge_y", "hinge_x", "sign_y"),
+            ):
+                tip_a = getattr(a, along) + getattr(a, sign) * a.radius
+                tip_b = getattr(b, along) + getattr(b, sign) * b.radius
+                if (
+                    abs(getattr(a, across) - getattr(b, across)) <= thickness
+                    and getattr(a, sign) == -getattr(b, sign) != 0
+                    and abs(tip_a - tip_b) <= thickness
+                ):
+                    axes[a] = axes[b] = axis
+    return axes
 
 
 def _near_wall(point: tuple[float, float], walls: list[WallSegment], distance: float) -> bool:

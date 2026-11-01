@@ -453,3 +453,15 @@ def test_small_gap_without_glazing_stays_open() -> None:
 
     assert not openings
     assert WallSegment("horizontal", 150, 0, 80) in walls
+
+
+def test_double_door_with_touching_arcs_beside_a_wall() -> None:
+    # A front double door: both arcs reach the middle and touch, and a wall
+    # runs past the right leaf's open end (which must not set the doorway).
+    segments = [*_gap_between(80, 220), WallSegment("vertical", 235, 40, 150)]
+    details = _swing(_blank(), (80, 150), 70, 270, 360)
+    _swing(details, (220, 150), 70, 180, 270)
+
+    _, openings = find_openings(segments, _blank(), details, thickness=10)
+
+    assert _door_spans(openings) == [(80, 220)]
