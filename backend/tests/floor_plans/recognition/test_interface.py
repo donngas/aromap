@@ -18,6 +18,7 @@ PASS_IMAGES = [
     FIXTURES / "three_bed_home_plan.png",
     FIXTURES / "ground_floor_plan.png",
     FIXTURES / "porch_house_plan.png",
+    FIXTURES / "balcony_home_plan.png",
 ]
 # Images in fixtures/local/fail are git-ignored (unclear or unrecorded redistribution
 # rights; see local/SOURCES.md) and recognized poorly. Their tests are skipped when
@@ -36,6 +37,7 @@ NAMED = {
     "three_bed_home": FIXTURES / "three_bed_home_plan.png",  # bold walls, many rooms
     "ground_floor": FIXTURES / "ground_floor_plan.png",  # CAD-style, corner column markers
     "porch_house": FIXTURES / "porch_house_plan.png",  # half-open doors, dashed passage
+    "balcony_home": FIXTURES / "balcony_home_plan.png",  # thin inner walls, light windows
     "cad_cafe": LOCAL_FAIL / "cad_cafe_plan.png",  # CAD drawing
     "colored_home": FIXTURES / "colored_home_plan.png",  # colored, dimensioned
     "warehouse": LOCAL_FAIL / "warehouse_plan.png",  # gray solid walls
@@ -383,6 +385,50 @@ def test_porch_house_counts_and_open_passage(drafts) -> None:
     ]
     assert not any(o.start.y < 461 and o.end.y > 325 for o in passage), passage
     assert layout.indoor_domain is not None and len(layout.indoor_domain.boundary) == 4
+
+
+# Home with a balcony and a bay: inner walls half the outer walls' width, light
+# gray windows between short black wall pieces.
+
+
+@pytest.mark.parametrize(
+    "start, end",
+    [
+        ((130, 420), (188, 420)),  # balcony door, between a window and a short wall
+        ((510, 420), (558, 420)),  # dining room to patio
+        ((208, 206), (250, 206)),  # bedroom 3, thin wall
+        ((230, 282), (273, 282)),  # bathroom 2, thin wall
+    ],
+)
+def test_balcony_home_doors(drafts, start, end) -> None:
+    doors = drafts["balcony_home"].floor_plan.layout.doors
+    assert _has_opening(doors, start, end), doors
+
+
+@pytest.mark.parametrize(
+    "start, end",
+    [
+        ((64, 420), (111, 420)),  # bedroom 1, after the corner piece
+        ((210, 420), (234, 420)),  # small bathroom window
+        ((598, 420), (646, 420)),  # window pair split by a short wall
+        ((659, 420), (707, 420)),
+        ((199, 48), (247, 48)),  # either side of where the bedroom partition meets
+        ((264, 48), (312, 48)),
+        ((254, 420), (254, 480)),  # bay side, light gray
+    ],
+)
+def test_balcony_home_windows(drafts, start, end) -> None:
+    windows = drafts["balcony_home"].floor_plan.layout.windows
+    assert _has_opening(windows, start, end), windows
+
+
+def test_balcony_home_counts_and_outline(drafts) -> None:
+    draft = drafts["balcony_home"]
+    layout = draft.floor_plan.layout
+    assert (len(layout.doors), len(layout.windows)) == (11, 14)
+    # The bay is inside; the balcony, porch, and patio are outside.
+    assert layout.indoor_domain is not None and len(layout.indoor_domain.boundary) == 12
+    assert not draft.warnings
 
 
 # Synthetic plans covering each supported drawing style; they need no image files.
