@@ -1,5 +1,9 @@
 # Aromap
 
+<a href="https://info.korea.edu/"><img src="https://custom-icon-badges.demolab.com/badge/Korea%20University-8b0029.svg?style=flat-square&logo=korea-university&logoColor=white" alt="Korea University"></a>
+
+Try the [live demo](https://aromap.geunh.com/) or watch the [demo video](https://youtu.be/gbCTmqfzbLI).
+
 Indoor scent-distribution simulator built for the Korea University College of Informatics Inthon 2026, following the theme "Sensation."  
 Upload a floor plan, review its geometry and metric scale, then compare diffuser
 placements, airflow devices, and opening states over time.
